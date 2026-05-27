@@ -92,6 +92,13 @@ class ChatCompanionProperties(PropertyGroup):
         update=PropertyUpdates.update_ui,
     )
 
+    expanded_answer_code_indices: StringProperty(
+        name="Expanded Answer Code Blocks",
+        description="Comma-separated answer code block indices expanded in the UI",
+        default="",
+        update=PropertyUpdates.update_ui,
+    )
+
     is_streaming: BoolProperty(
         name="Streaming",
         description="If answer is currently being streamed",

@@ -112,6 +112,7 @@ class PropertyUpdates:
             self.user_prompt = history_item.user_prompt
             self.answer = history_item.answer
             self.answer_parts = history_item.answer_parts
+            self.expanded_answer_code_indices = ""
 
             cc_globals.request_failed = history_item.is_error
             self.error_button_icon = history_item.error_button_icon

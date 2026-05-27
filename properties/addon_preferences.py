@@ -23,6 +23,7 @@ from ..operators.operator_install_deps import CHAT_COMPANION_OT_install_deps
 from .properties import ChatCompanionProperties
 from .property_updates import PropertyUpdates
 from ..utils import cc_globals
+from ..panels.panel_skills import draw_skills_ui
 from .. import __package__ as base_package
 
 
@@ -51,9 +52,11 @@ class ChatCompanionPreferences(AddonPreferences):
     )
 
     _open_ai_models = (
-        ("gpt-5.3-codex", "GPT-5.3 Codex - 128,000 token", "GPT-5.3 Codex - 128,000 token"),
-        ("gpt-5.5", "GPT-5.5 - 128,000 token", "GPT-5.5 - 128,000 token"),
-        ("gpt-5.4-mini", "GPT-5.4 Mini - 128,000 token", "GPT-5.4 Mini - 128,000 token"),
+        ("mimo-v2.5-pro", "MiMo V2.5 Pro", "MiMo V2.5 Pro"),
+        ("mimo-v2.5", "MiMo V2.5", "MiMo V2.5"),
+        ("gpt-5.3-codex", "GPT-5.3 Codex", "GPT-5.3 Codex"),
+        ("gpt-5.5", "GPT-5.5", "GPT-5.5"),
+        ("gpt-5.4-mini", "GPT-5.4 Mini", "GPT-5.4 Mini"),
     )
 
     _deepseek_models = (
@@ -70,6 +73,8 @@ class ChatCompanionPreferences(AddonPreferences):
     )
 
     tokens_dict = {
+        "mimo-v2.5-pro": 1000000,
+        "mimo-v2.5": 1000000,
         "gpt-5.3-codex": 128000,
         "gpt-5.5": 128000,
         "gpt-5.4-mini": 128000,
@@ -79,6 +84,24 @@ class ChatCompanionPreferences(AddonPreferences):
         "claude-opus-4-7": 200000,
         "claude-haiku-4-5-20251001": 200000,
     }
+
+    _answer_display_modes = (
+        (
+            "READABLE",
+            "Readable",
+            "Render common Markdown as clean panel blocks.",
+        ),
+        (
+            "COMPACT",
+            "Compact",
+            "Use shorter previews for narrow or dense panel reading.",
+        ),
+        (
+            "RAW",
+            "Raw Markdown",
+            "Show the original Markdown text in the panel.",
+        ),
+    )
 
     # endregion
 
@@ -92,7 +115,7 @@ class ChatCompanionPreferences(AddonPreferences):
     open_ai_base_url: props.StringProperty(
         name="Base URL",
         description="OpenAI-compatible API base URL",
-        default="https://api.openai.com/v1",
+        default="https://api.xiaomimimo.com/v1",
     )
 
     deepseek_api_key: props.StringProperty(
@@ -167,6 +190,21 @@ class ChatCompanionPreferences(AddonPreferences):
         precision=3,
         default=0,
         subtype="FACTOR",
+    )
+
+    answer_display_mode: props.EnumProperty(
+        name="Answer Display Mode",
+        description="Choose how AI answers are displayed in the Answer panel",
+        items=_answer_display_modes,
+        default="READABLE",
+    )
+
+    answer_code_preview_lines: props.IntProperty(
+        name="Code Preview Lines",
+        description="Number of code lines shown before a code block is collapsed",
+        min=1,
+        max=80,
+        default=12,
     )
     # endregion
 
@@ -316,6 +354,10 @@ class ChatCompanionPreferences(AddonPreferences):
         display_settings.label(text="Display", icon="RESTRICT_VIEW_ON")
         offset_container = display_settings.row(align=True)
         offset_container.prop(self, "text_width_adjust", text="Adjust Text Width")
+        answer_mode_container = display_settings.row(align=True)
+        answer_mode_container.prop(self, "answer_display_mode", text="Answer")
+        code_preview_container = display_settings.row(align=True)
+        code_preview_container.prop(self, "answer_code_preview_lines", text="Code Preview")
 
         layout.box()
 
@@ -342,6 +384,13 @@ class ChatCompanionPreferences(AddonPreferences):
         agent_dev_right: UILayout = agent_dev_split.column(align=True)
         agent_dev_right.alert = self.developer_mode
         agent_dev_right.prop(self, "developer_mode", text="Unlock dev.run_python")
+
+        layout.box()
+
+        # ! skills
+        skills_settings = layout.column(align=True)
+        skills_settings.label(text="Skills", icon="TOOL_SETTINGS")
+        draw_skills_ui(skills_settings)
 
         layout.box()
 

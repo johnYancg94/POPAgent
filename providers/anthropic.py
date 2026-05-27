@@ -95,6 +95,7 @@ class AnthropicProvider(BaseProvider):
             text="\n".join(text_parts),
             tool_calls=tool_calls,
             finish_reason=stop_reason,
+            usage=response_json.get("usage") or {},
             raw=response_json,
         )
 
@@ -120,6 +121,7 @@ class AnthropicStreamParser(StreamParser):
         # index -> {"type": "text"|"tool_use", "text": str, "id": str, "name": str, "json_buf": str}
         self._blocks: dict[int, dict] = {}
         self._stop_reason: str = ""
+        self._usage: dict = {}
         self._pending_event: str = ""
         self._emitted_tool_indices: set[int] = set()
         self._tool_wire_to_skill_name = tool_wire_to_skill_name or {}
@@ -153,6 +155,12 @@ class AnthropicStreamParser(StreamParser):
                 slot["id"] = block.get("id", "")
                 slot["name"] = block.get("name", "")
             self._blocks[idx] = slot
+
+        elif ev == "message_start":
+            message = payload.get("message") or {}
+            usage = message.get("usage")
+            if isinstance(usage, dict):
+                self._usage.update(usage)
 
         elif ev == "content_block_delta":
             idx = payload.get("index", 0)
@@ -192,6 +200,9 @@ class AnthropicStreamParser(StreamParser):
             sr = delta.get("stop_reason")
             if sr:
                 self._stop_reason = sr
+            usage = payload.get("usage")
+            if isinstance(usage, dict):
+                self._usage.update(usage)
 
         elif ev == "message_stop":
             events.append(StreamEvent(kind="done", payload=self._stop_reason or "end_turn"))
@@ -219,5 +230,6 @@ class AnthropicStreamParser(StreamParser):
             text="\n".join(p for p in text_parts if p),
             tool_calls=tool_calls,
             finish_reason=self._stop_reason or ("tool_use" if tool_calls else "end_turn"),
+            usage=self._usage,
             raw=None,
         )

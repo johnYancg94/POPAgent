@@ -13,6 +13,7 @@
 
 import re
 import bpy
+import blf
 import copy
 import asyncio
 import textwrap
@@ -20,130 +21,19 @@ import platform
 import itertools
 from bpy.types import Context
 from .. import __package__ as base_package
+from .markdown_renderer import parse_markdown_blocks
 
 
 def parse_llm_content(answer: str) -> list:
     """Formats LLM answer"""
-
-    # ! 1. split lines at line boundaries (for example linesep: \n)
-    answer_list: list[str] = answer.splitlines()
-
-    # ! 2. separate into text/code/list parts
-    # for special treatment of individual parts
-    answer_parts: list = []
-    index: int = 0
-    current_type: str = "none"
-    # if the next part is a different one than the current
-    # for example switching from text to code
-    switch: bool = False
-    first_list_item: bool = True
-    jumping_list_gap: bool = False
-    code_started: bool = False
-    # can be text, python, ... whatever LLM puts after initial "```"
-    code_language: str = ""
-
-    # TODO lists are still not parsed correctly
-    # TODO sometimes the first line of text after code is still wrongly considered code
-    for line in answer_list:
-        # * switching between parts
-        # code ends, afterwards could be anything
-        if "```" in line and code_started:
-            current_type = "none"
-            code_started = False
-            code_language = ""
-            continue
-        # code begins
-        elif "```" in line:
-            current_type = "code"
-            code_language = line.split("`")[-1].title()
-            index += 1
-            switch = True
-            code_started = True
-        # list line
-        elif re.search(r"^\d+\.\s", line):
-            current_type = "list"
-            if first_list_item or not jumping_list_gap:
-                first_list_item = False
-                index += 1
-                new_part = {"type": current_type, "content": []}
-                answer_parts.append(new_part)
-        # remove blank lines after a list entry
-        elif current_type == "list" and len(line) == 0:
-            jumping_list_gap = True
-            continue
-        # first line after last list line
-        elif current_type == "list" and not re.search(r"^\d+\.\s", line):
-            current_type = "text"
-            index += 1
-            switch = True
-            first_list_item = True
-        # after code, the type is none, and is followed by blank text lines
-        elif current_type == "none" and len(line) == 0:
-            current_type = "text"
-            index += 1
-            switch = True
-        else:
-            pass
-
-        # * adding of lines to parts
-        # create first part
-        if len(answer_parts) == 0:
-            # if first line is already code
-            if current_type == "code":
-                index -= 1
-                switch = False
-                new_part = {
-                    "type": "code",
-                    "content": [],
-                    "code_language": code_language,
-                    "error": "",
-                    "error_line_number": None,
-                }
-            # first line is text part
-            else:
-                current_type = "text"
-                new_part = {
-                    "type": current_type,
-                    "content": [
-                        line,
-                    ],
-                }
-            answer_parts.append(new_part)
-        # create part of certain type
-        elif switch:
-            new_part = {
-                "type": current_type,
-                "content": [],
-                "code_language": code_language,
-                "error": "",
-                "error_line_number": None,
-            }
-            answer_parts.append(new_part)
-            switch = False
-        # append line to current part type
-        else:
-            answer_parts[index]["content"].append(line)
-
-        # reset if we are currently just jumping over a blank line
-        # between list items
-        jumping_list_gap = False
-
-    # add indices
-    for index, part in enumerate(answer_parts):
-        part["index"] = index
-
-    # # get full parts when they are finished (the next part started)
-    # if len(answer_parts) > 1:
-    #     print("---------------", answer_parts[-2])
-
-    return answer_parts
+    return parse_markdown_blocks(answer)
 
 
 def wrap_array(context, array):
     wrapped_array = []
     for line in array:
         # wrap each line if exceeding panel width
-        wrap_list = textwrap.wrap(line, calc_max_characters(context))
+        wrap_list = wrap_text_to_panel_width(context, line)
         # add empty string to empty list
         # otherwise it gets lost in chaining later
         # (this will be an empty line)
@@ -164,7 +54,7 @@ def wrap_string_to_panel(context, string, padding=0, linebreak=False):
         wrap_list = wrapped_string.splitlines()
         for index, line in enumerate(wrap_list):
             # wrap each line if exceeding panel width
-            new_lines = textwrap.wrap(line, calc_max_characters(context, padding))
+            new_lines = wrap_text_to_panel_width(context, line, padding)
             if len(new_lines) == 0:
                 new_lines.append("")
             wrap_list.pop(index)
@@ -172,9 +62,80 @@ def wrap_string_to_panel(context, string, padding=0, linebreak=False):
                 wrap_list.insert(index, new_line)
     else:
         # wrap each line if exceeding panel width
-        wrap_list = textwrap.wrap(wrapped_string, calc_max_characters(context, padding))
+        wrap_list = wrap_text_to_panel_width(context, wrapped_string, padding)
 
     return wrap_list
+
+
+def _font_size_pixels():
+    ui_scale = bpy.context.preferences.view.ui_scale
+    if bpy.app.version < (4, 3, 0):
+        font_size_points = bpy.context.preferences.ui_styles[0].widget_label.points
+    else:
+        font_size_points = bpy.context.preferences.ui_styles[0].widget.points
+    return max(1, int((font_size_points * bpy.context.preferences.system.dpi) / 72 * ui_scale))
+
+
+def _text_width_px(text: str) -> float:
+    font_id = 0
+    try:
+        blf.size(font_id, _font_size_pixels())
+        return blf.dimensions(font_id, text)[0]
+    except Exception:
+        return len(text) * _font_size_pixels() * 0.55
+
+
+def _available_text_width(context, padding=0):
+    ui_scale = bpy.context.preferences.view.ui_scale
+    tab_width = 40 * ui_scale
+    margin = 34 * ui_scale
+    extra = padding * ui_scale
+    return max(36, context.region.width - tab_width - margin - extra)
+
+
+def wrap_text_to_panel_width(context, text, padding=0):
+    """Wrap by measured pixel width so narrow panels do not ellipsize labels."""
+    max_width = _available_text_width(context, padding)
+    if not text:
+        return [""]
+
+    lines = []
+    for source_line in str(text).splitlines() or [""]:
+        if not source_line:
+            lines.append("")
+            continue
+
+        current = ""
+        for token in re.findall(r"\S+\s*", source_line):
+            candidate = current + token
+            if current and _text_width_px(candidate.rstrip()) > max_width:
+                lines.extend(_wrap_long_token(current.rstrip(), max_width))
+                current = token.lstrip()
+            else:
+                current = candidate
+
+        if current:
+            lines.extend(_wrap_long_token(current.rstrip(), max_width))
+
+    return lines or [""]
+
+
+def _wrap_long_token(text, max_width):
+    if _text_width_px(text) <= max_width:
+        return [text]
+
+    wrapped = []
+    current = ""
+    for char in text:
+        candidate = current + char
+        if current and _text_width_px(candidate) > max_width:
+            wrapped.append(current)
+            current = char
+        else:
+            current = candidate
+    if current:
+        wrapped.append(current)
+    return wrapped
 
 
 def calc_max_characters(context, padding=0):

@@ -18,6 +18,13 @@ class OpenAICompatProvider(BaseProvider):
             return prefs.open_ai_base_url.rstrip("/") + "/chat/completions"
         return prefs.deepseek_base_url.rstrip("/") + "/chat/completions"
 
+    def _is_mimo_request(self, prefs) -> bool:
+        if self._org != "openai":
+            return False
+        model = getattr(prefs, "open_ai_model", "")
+        base_url = getattr(prefs, "open_ai_base_url", "")
+        return model.startswith("mimo-") or "xiaomimimo.com" in base_url
+
     def get_headers(self, prefs) -> dict:
         key = self.get_api_key(prefs)
         headers = {
@@ -32,14 +39,16 @@ class OpenAICompatProvider(BaseProvider):
         model = prefs.open_ai_model if self._org == "openai" else prefs.deepseek_model
         payload = {
             "temperature": 1.0,
-            "top_p": 1.0,
+            "top_p": 0.95 if self._is_mimo_request(prefs) else 1.0,
             "stream": prefs.use_streaming,
             "frequency_penalty": 0,
             "model": model,
             "n": 1,
             "presence_penalty": 0,
         }
-        if self._org == "openai":
+        if self._is_mimo_request(prefs):
+            payload["thinking"] = {"type": "disabled"}
+        elif self._org == "openai":
             payload["reasoning_effort"] = "medium"
         return payload
 
@@ -81,7 +90,14 @@ class OpenAICompatProvider(BaseProvider):
             "temperature": 1.0,
             "stream": bool(stream),
         }
-        if self._org == "openai":
+        if self._is_mimo_request(prefs):
+            body.update({
+                "top_p": 0.95,
+                "frequency_penalty": 0,
+                "presence_penalty": 0,
+                "thinking": {"type": "disabled"},
+            })
+        elif self._org == "openai":
             body["reasoning_effort"] = "medium"
         if tools:
             body["tools"] = tools
@@ -89,6 +105,7 @@ class OpenAICompatProvider(BaseProvider):
         if stream:
             headers = dict(headers)
             headers["Accept"] = "text/event-stream"
+            body["stream_options"] = {"include_usage": True}
         return url, headers, body
 
     def parse_response(self, response_json: dict) -> LLMResponse:
@@ -116,6 +133,7 @@ class OpenAICompatProvider(BaseProvider):
             tool_calls=tool_calls,
             finish_reason=finish_reason,
             reasoning_content=reasoning_content,
+            usage=response_json.get("usage") or {},
             raw=response_json,
         )
 
@@ -140,6 +158,7 @@ class OpenAIStreamParser(StreamParser):
         # index -> {"id": str, "name": str, "args": str}
         self._tool_acc: dict[int, dict] = {}
         self._finish_reason: str = ""
+        self._usage: dict = {}
         self._emitted_tool_indices: set[int] = set()
         self._tool_wire_to_skill_name = tool_wire_to_skill_name or {}
 
@@ -158,6 +177,9 @@ class OpenAIStreamParser(StreamParser):
             chunk = json.loads(data)
         except json.JSONDecodeError:
             return []
+
+        if isinstance(chunk.get("usage"), dict):
+            self._usage = chunk["usage"]
 
         events: list[StreamEvent] = []
         choice = (chunk.get("choices") or [{}])[0]
@@ -228,5 +250,6 @@ class OpenAIStreamParser(StreamParser):
             tool_calls=tool_calls,
             finish_reason=self._finish_reason or ("tool_calls" if tool_calls else "stop"),
             reasoning_content="".join(self._reasoning_parts),
+            usage=self._usage,
             raw=None,
         )

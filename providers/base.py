@@ -9,6 +9,7 @@ class LLMResponse:
     tool_calls: list  # list[ToolCallRaw]
     finish_reason: str
     reasoning_content: str = ""
+    usage: dict = field(default_factory=dict)
     raw: Any = None
 
 

@@ -2,92 +2,121 @@
 # it under the terms of the GNU General Public License as published by
 # the Free Software Foundation; either version 3 of the License, or
 # (at your option) any later version.
-#
-# This program is distributed in the hope that it will be useful, but
-# WITHOUT ANY WARRANTY; without even the implied warranty of
-# MERCHANTIBILITY or FITNESS FOR A PARTICULAR PURPOSE. See the GNU
-# General Public License for more details.
-#
-# You should have received a copy of the GNU General Public License
-# along with this program. If not, see <http://www.gnu.org/licenses/>.
 
 from bpy.types import Panel, UILayout
+
 from .panel import POLYGONINGENIEUR_panel
-from ..utils.utils import wrap_string_to_panel
-from ..properties.properties import ChatCompanionProperties
-from ..properties.addon_preferences import ChatCompanionPreferences
-from .. import __package__ as base_package
+from ..operators.operator_usage import (
+    CHAT_COMPANION_OT_clear_usage,
+    CHAT_COMPANION_OT_export_usage_csv,
+)
+from ..utils.usage_stats import format_cost_rmb, format_tokens, summarize_usage
 
 
 class CHAT_COMPANION_PT_tokens(POLYGONINGENIEUR_panel, Panel):
     bl_idname = "CHAT_COMPANION_PT_tokens"
-    bl_label = "Token"
+    bl_label = "Usage"
     bl_order = 3
     bl_options = {"DEFAULT_CLOSED"}
 
     def draw_header(self, context):
-        self.layout.label(text="", icon="SMALL_CAPS")
+        self.layout.label(text="", icon="SORTTIME")
 
     def draw(self, context):
-        props: ChatCompanionProperties = context.scene.chat_companion_properties
-        prefs: ChatCompanionPreferences = context.preferences.addons[
-            base_package
-        ].preferences
+        usage_records = context.scene.chat_companion_usage
+        summary = summarize_usage(usage_records)
 
         layout = self.layout
-        layout.use_property_split = True
+        layout.use_property_split = False
         layout.use_property_decorate = False
 
-        # ! info text
-        wrapped_info_text = wrap_string_to_panel(
-            context,
-            "LLMs use token to determine pricing, process text and have a technical token limit for each request.",
-        )
-        for line in wrapped_info_text:
-            line_col: UILayout = layout.column()
-            line_col.label(text=line)
-            line_col.scale_y = 0.6
-        wrapped_approx_text = wrap_string_to_panel(
-            context, "Numbers here are approximations!"
-        )
-        for line in wrapped_approx_text:
-            line_col: UILayout = layout.column()
-            line_col.label(text=line)
+        if summary["requests"] == 0:
+            empty = layout.column(align=True)
+            empty.label(text="No usage recorded for this scene yet.", icon="INFO")
+            empty.label(text="Ask POPAgent and this panel will fill in.")
+            return
 
-        # ! tokens of enabled history
-        layout.label(text="Token for next question:")
-        token_box = layout.box()
-        token_summary = token_box.column(align=True)
-        token_summary.scale_y = 0.7
-        # system
-        token_summary.label(text="    288" + " system")
-        # prompt
-        token_summary.label(text="+ " + str(props.user_prompt_tokens) + " prompt")
-        # attachments
-        token_summary.label(
-            text="+ " + str(props.selected_attachment_tokens) + " enabled attachments"
-        )
-        # history
-        token_summary.label(
-            text="+ " + str(props.selected_history_tokens) + " enabled history"
-        )
-        # total
-        token_summary.separator()
-        total_tokens = (
-            288
-            + props.user_prompt_tokens
-            + props.selected_history_tokens
-            + props.selected_attachment_tokens
-        )
-        token_summary.label(text="= " + str(total_tokens) + " total token")
-        # left
-        token_summary.separator(factor=2)
-        max_tokens: int = prefs.tokens_dict.get(prefs.open_ai_model, 8000)
-        if prefs.llm_organization == "deepseek":
-            max_tokens = prefs.tokens_dict.get(prefs.deepseek_model, 8000)
+        self._draw_summary(layout, summary)
+        layout.separator()
+        self._draw_breakdown(layout, summary)
+        layout.separator()
+        self._draw_recent(layout, usage_records)
+        layout.separator()
+        self._draw_actions(layout)
 
-        left_tokens = max_tokens - total_tokens
-        left_tokens_column = token_summary.column(align=True)
-        left_tokens_column.alert = left_tokens < 100
-        left_tokens_column.label(icon="FORWARD", text=str(left_tokens) + " token")
-        left_tokens_column.label(text="left to generate answer")
+    def _draw_summary(self, layout: UILayout, summary: dict):
+        requests = summary["requests"]
+        errors = summary["errors"]
+        success_rate = 0
+        if requests:
+            success_rate = round(((requests - errors) / requests) * 100)
+
+        box = layout.box()
+        box.label(text="Scene Usage", icon="GRAPH")
+
+        grid = box.grid_flow(row_major=True, columns=2, even_columns=True, even_rows=True)
+        self._metric(grid, "Requests", str(requests), "FILE_TEXT")
+        self._metric(grid, "Total tokens", format_tokens(summary["total_tokens"]), "SMALL_CAPS")
+        self._metric(grid, "RMB cost", format_cost_rmb(summary["estimated_cost_rmb"]), "TAG")
+        self._metric(grid, "Success", f"{success_rate}%", "CHECKMARK")
+
+        if summary["avg_latency_ms"]:
+            latency = box.row(align=True)
+            latency.label(text=f"Average latency: {summary['avg_latency_ms']} ms", icon="TIME")
+
+    def _draw_breakdown(self, layout: UILayout, summary: dict):
+        box = layout.box()
+        box.label(text="Token Breakdown", icon="LINENUMBERS_ON")
+
+        col = box.column(align=True)
+        self._line(col, "Input", summary["input_tokens"], "TRIA_RIGHT")
+        self._line(col, "Output", summary["output_tokens"], "TRIA_RIGHT")
+        if summary["cache_creation_tokens"]:
+            self._line(col, "Cache creation", summary["cache_creation_tokens"], "TRIA_RIGHT")
+        if summary["cache_read_tokens"]:
+            self._line(col, "Cache read", summary["cache_read_tokens"], "TRIA_RIGHT")
+        if summary["reasoning_tokens"]:
+            self._line(col, "Reasoning", summary["reasoning_tokens"], "TRIA_RIGHT")
+
+    def _draw_recent(self, layout: UILayout, usage_records):
+        box = layout.box()
+        box.label(text="Recent Requests", icon="PRESET")
+
+        shown = 0
+        for item in reversed(usage_records):
+            row = box.row(align=True)
+            row.alert = item.is_error
+            icon = "ERROR" if item.is_error else "CHECKMARK"
+            model = item.model or item.llm_organization or "model"
+            row.label(text=item.created_at[-8:], icon=icon)
+            row.label(text=model)
+            row.label(text=format_tokens(item.total_tokens))
+            row.label(text=format_cost_rmb(item.estimated_cost_rmb, item.cost_is_estimated))
+            shown += 1
+            if shown >= 8:
+                break
+
+    def _draw_actions(self, layout: UILayout):
+        row = layout.row(align=True)
+        row.operator(
+            CHAT_COMPANION_OT_export_usage_csv.bl_idname,
+            text="Export CSV",
+            icon="EXPORT",
+        )
+        clear = row.operator(
+            CHAT_COMPANION_OT_clear_usage.bl_idname,
+            text="Clear",
+            icon="TRASH",
+        )
+
+    def _metric(self, layout: UILayout, label: str, value: str, icon: str):
+        col = layout.column(align=True)
+        col.label(text=label, icon=icon)
+        value_row = col.row(align=True)
+        value_row.scale_y = 1.2
+        value_row.label(text=value)
+
+    def _line(self, layout: UILayout, label: str, value: int, icon: str):
+        row = layout.row(align=True)
+        row.label(text=label, icon=icon)
+        row.label(text=format_tokens(value))

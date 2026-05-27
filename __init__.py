@@ -20,9 +20,9 @@ from .panels.panel_output import CHAT_COMPANION_PT_output
 from .panels.panel_history import CHAT_COMPANION_PT_history
 from .panels.panel_links import CHAT_COMPANION_PT_links
 from .panels.panel_tokens import CHAT_COMPANION_PT_tokens
-from .panels.panel_skills import CHAT_COMPANION_PT_skills
 from .properties.item_history import CHAT_COMPANION_UL_item_history
 from .properties.item_history import HistoryPropertyGroup
+from .properties.item_usage import UsagePropertyGroup
 from .menus.menu_add_attachment import CHAT_COMPANION_MT_add_attachment
 from .properties.item_attachment import CHAT_COMPANION_UL_item_attachment
 from .properties.item_attachment import AttachmentPropertyGroup
@@ -30,6 +30,8 @@ from .operators.operator_ask import CHAT_COMPANION_OT_ask
 from .operators.operator_enter import CHAT_COMPANION_OT_process_prompt_input
 from .operators.operator_copy import CHAT_COMPANION_OT_copy
 from .operators.operator_copy_error import CHAT_COMPANION_OT_copy_error
+from .operators.operator_answer_view import CHAT_COMPANION_OT_open_answer_text
+from .operators.operator_answer_view import CHAT_COMPANION_OT_toggle_answer_code
 from .operators.operator_open_prefs import CHAT_COMPANION_OT_open_prefs
 from .operators.operator_website import CHAT_COMPANION_OT_website
 from .operators.operator_full_version import CHAT_COMPANION_OT_full_version
@@ -39,6 +41,8 @@ from .operators.operator_history import CHAT_COMPANION_OT_favorite_history_item
 from .operators.operator_history import CHAT_COMPANION_OT_delete_history_item
 from .operators.operator_history import CHAT_COMPANION_OT_clear_history
 from .operators.operator_history import CHAT_COMPANION_OT_move_history
+from .operators.operator_usage import CHAT_COMPANION_OT_clear_usage
+from .operators.operator_usage import CHAT_COMPANION_OT_export_usage_csv
 from .operators.operator_install_deps import CHAT_COMPANION_OT_install_deps
 from .operators.operator_change_llm import CHAT_COMPANION_OT_select_open_ai
 from .operators.operator_select_anthropic import CHAT_COMPANION_OT_select_anthropic
@@ -92,16 +96,18 @@ classes = (
     CHAT_COMPANION_PT_history,
     CHAT_COMPANION_UL_item_history,
     HistoryPropertyGroup,
+    UsagePropertyGroup,
     CHAT_COMPANION_MT_add_attachment,
     CHAT_COMPANION_UL_item_attachment,
     AttachmentPropertyGroup,
     CHAT_COMPANION_PT_links,
     CHAT_COMPANION_PT_tokens,
-    CHAT_COMPANION_PT_skills,
     CHAT_COMPANION_OT_ask,
     CHAT_COMPANION_OT_process_prompt_input,
     CHAT_COMPANION_OT_copy,
     CHAT_COMPANION_OT_copy_error,
+    CHAT_COMPANION_OT_open_answer_text,
+    CHAT_COMPANION_OT_toggle_answer_code,
     CHAT_COMPANION_OT_open_prefs,
     CHAT_COMPANION_OT_website,
     CHAT_COMPANION_OT_full_version,
@@ -111,6 +117,8 @@ classes = (
     CHAT_COMPANION_OT_delete_history_item,
     CHAT_COMPANION_OT_clear_history,
     CHAT_COMPANION_OT_move_history,
+    CHAT_COMPANION_OT_clear_usage,
+    CHAT_COMPANION_OT_export_usage_csv,
     CHAT_COMPANION_OT_install_deps,
     CHAT_COMPANION_OT_select_open_ai,
     CHAT_COMPANION_OT_select_anthropic,
@@ -190,6 +198,9 @@ def register():
     bpy.types.Scene.chat_companion_history = bpy.props.CollectionProperty(
         type=HistoryPropertyGroup
     )
+    bpy.types.Scene.chat_companion_usage = bpy.props.CollectionProperty(
+        type=UsagePropertyGroup
+    )
     bpy.types.Scene.chat_companion_attachments = bpy.props.CollectionProperty(
         type=AttachmentPropertyGroup
     )
@@ -225,6 +236,7 @@ def unregister():
 
     del bpy.types.Scene.chat_companion_properties
     del bpy.types.Scene.chat_companion_history
+    del bpy.types.Scene.chat_companion_usage
     del bpy.types.Scene.chat_companion_attachments
 
     for pcoll in cc_globals.preview_collections.values():

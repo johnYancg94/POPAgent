@@ -17,6 +17,7 @@
 import bpy
 import asyncio
 import json
+import time
 import traceback
 from asyncio import Future
 from bpy.props import StringProperty, BoolProperty
@@ -33,6 +34,7 @@ from ..utils.utils import (
     construct_parts,
     get_system_info,
 )
+from ..utils.usage_stats import add_usage_record
 from urllib.parse import quote
 from ..properties.properties import ChatCompanionProperties
 from ..properties.addon_preferences import ChatCompanionPreferences
@@ -134,6 +136,7 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         # for a brief moment before the ui updates to display new answer
         props.answer = ""
         props.answer_parts = ""
+        props.expanded_answer_code_indices = ""
         props.waiting_string = ""
         props.waiting_icon = "BLANK1"
         props.error_button_icon = ""
@@ -260,9 +263,12 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                 # ! streaming
                 if self.use_streaming:
                     props.is_streaming = True
+                    if prefs.llm_organization in {"openai", "deepseek"}:
+                        payload["stream_options"] = {"include_usage": True}
                     print(
                         f"Sending streaming request:\n{props.api_url = }\n{props.api_headers}"
                     )
+                    started_at = time.perf_counter()
                     async with client.stream(
                         "POST",
                         url=props.api_url,
@@ -273,9 +279,18 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                         # to have http errors also raise exceptions
                         response.raise_for_status()
 
-                        await self.handle_stream_chunk(context, response)
+                        raw_usage = await self.handle_stream_chunk(context, response)
 
                     cc_globals.request_failed = False
+                    add_usage_record(
+                        context,
+                        prefs,
+                        raw_usage,
+                        mode="streaming",
+                        prompt=self.user_prompt,
+                        latency_ms=(time.perf_counter() - started_at) * 1000,
+                        status_code=response.status_code,
+                    )
 
                     if props.answer == "":
                         self.show_general_error(
@@ -413,6 +428,7 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         ].preferences
 
         new_content = ""
+        raw_usage = {}
 
         async for chunk in response.aiter_lines():
             # connected
@@ -437,6 +453,9 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                 data: dict = json.loads(data_chunk)
             except json.JSONDecodeError as e:
                 continue
+
+            if isinstance(data.get("usage"), dict):
+                raw_usage = data["usage"]
 
             root: dict | list | None = data.get(props.res_schema_root)
             if not root:
@@ -476,10 +495,12 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                     context.area.tag_redraw()
                 except Exception as e:
                     pass
+        return raw_usage
 
     async def _plain_query(self, context, client, payload, props, prefs):
         """Original non-streaming single-turn chat path."""
         print(f"Sending post request (plain):\n{props.api_url = }")
+        started_at = time.perf_counter()
         response = await client.post(
             url=props.api_url,
             headers=json.loads(props.api_headers),
@@ -488,6 +509,7 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         )
         response.raise_for_status()
         cc_globals.request_failed = False
+        status_code = response.status_code
 
         try:
             response = response.json()
@@ -500,6 +522,16 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
             self.report({"WARNING"}, "The response returned nothing.")
             self.quit()
             return
+
+        add_usage_record(
+            context,
+            prefs,
+            response.get("usage") or {},
+            mode="plain",
+            prompt=self.user_prompt,
+            latency_ms=(time.perf_counter() - started_at) * 1000,
+            status_code=status_code,
+        )
 
         root = response.get(props.res_schema_root)
         if not root:
@@ -617,7 +649,13 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                 messages = mb.to_openai(
                     system_prompt=system_text,
                     tool_name_mapper=provider._to_wire_tool_name,
-                    include_reasoning_content=(org == "deepseek"),
+                    include_reasoning_content=(
+                        org == "deepseek"
+                        or (
+                            org == "openai"
+                            and getattr(prefs, "open_ai_model", "").startswith("mimo-")
+                        )
+                    ),
                 )
                 url, headers, body = provider.build_request(
                     prefs, messages, tools, stream=use_stream
@@ -625,6 +663,8 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
 
             print(f"[agent] iter={iteration} url={url} stream={use_stream}")
 
+            started_at = time.perf_counter()
+            status_code = 200
             if use_stream:
                 llm_resp = await self._agent_stream_iter(
                     context, client, provider, url, headers, body, prefs, props
@@ -637,6 +677,7 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                 )
                 response.raise_for_status()
                 cc_globals.request_failed = False
+                status_code = response.status_code
 
                 try:
                     resp_json = response.json()
@@ -645,6 +686,16 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                     return
 
                 llm_resp = provider.parse_response(resp_json)
+
+            add_usage_record(
+                context,
+                prefs,
+                llm_resp.usage,
+                mode="agent",
+                prompt=self.user_prompt,
+                latency_ms=(time.perf_counter() - started_at) * 1000,
+                status_code=status_code,
+            )
 
             if llm_resp.tool_calls:
                 # 1. Record assistant message with tool calls.

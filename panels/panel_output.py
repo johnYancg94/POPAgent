@@ -19,6 +19,8 @@ from ..operators.operator_copy import CHAT_COMPANION_OT_copy
 from ..operators.operator_full_version import CHAT_COMPANION_OT_full_version
 from ..operators.operator_website import CHAT_COMPANION_OT_website
 from ..operators.operator_copy_error import CHAT_COMPANION_OT_copy_error
+from ..operators.operator_answer_view import CHAT_COMPANION_OT_open_answer_text
+from ..operators.operator_answer_view import CHAT_COMPANION_OT_toggle_answer_code
 from ..operators.operator_ask import CHAT_COMPANION_OT_ask
 from ..utils.utils import wrap_string_to_panel
 from ..utils.utils import wrap_array
@@ -94,8 +96,33 @@ class CHAT_COMPANION_PT_output(POLYGONINGENIEUR_panel, Panel):
 
         # ! get separated answer parts
         answer_parts = json.loads(chat_properties.answer_parts)
+        display_mode = addon_preferences.answer_display_mode
+        compact_width = display_mode == "COMPACT" or context.region.width < 280
+        narrow_width = compact_width or context.region.width < 360
+
+        self.draw_answer_actions(context, layout, chat_properties, addon_preferences)
+
+        if display_mode == "RAW":
+            self.draw_raw_answer(context, layout, chat_properties.answer)
+            return
+
+        expanded_code_indices = self.parse_expanded_indices(
+            chat_properties.expanded_answer_code_indices
+        )
+        code_preview_lines = addon_preferences.answer_code_preview_lines
+        if compact_width:
+            code_preview_lines = min(code_preview_lines, 6)
 
         for index, part in enumerate(answer_parts):
+            # ! Markdown headings
+            if part["type"] == "heading":
+                heading = part["content"][0] if part["content"] else ""
+                heading_container = layout.column(align=True)
+                heading_container.scale_y = 0.9 if compact_width else 1.05
+                for line in wrap_string_to_panel(context, heading):
+                    heading_container.label(text=line, icon="DISCLOSURE_TRI_RIGHT")
+                layout.separator(factor=0.15)
+
             # ! regular text to show
             if part["type"] == "text":
                 wrapped_text = wrap_array(context, part["content"])
@@ -108,17 +135,62 @@ class CHAT_COMPANION_PT_output(POLYGONINGENIEUR_panel, Panel):
                         # TODO make dependent on point size
                         line_col.scale_y = 0.6
 
+            # ! bullet list items
+            if part["type"] == "bullet_list":
+                for list_item in part["content"]:
+                    self.draw_list_line(
+                        context=context,
+                        layout=layout,
+                        marker="-",
+                        icon="NONE",
+                        text=list_item,
+                        padding=22,
+                    )
+
+            # ! quote text
+            if part["type"] == "quote":
+                quote_box = layout.box()
+                quote_box.enabled = False
+                quote_box.scale_y = 0.65
+                for quote_line in part["content"]:
+                    for line in wrap_string_to_panel(
+                        context=context, string=quote_line, padding=14
+                    ):
+                        quote_box.label(text=line, icon="INFO")
+
+            # ! Markdown tables, reduced to readable rows for narrow panels
+            if part["type"] == "table":
+                table_box = layout.box()
+                table_box.scale_y = 0.7
+                rows = part["content"]
+                headers = rows[0] if rows else []
+                body_rows = rows[1:] if len(rows) > 1 else rows
+                for row_cells in body_rows:
+                    row_text_parts = []
+                    for cell_index, cell in enumerate(row_cells):
+                        if cell_index < len(headers) and headers != row_cells:
+                            row_text_parts.append(f"{headers[cell_index]}: {cell}")
+                        else:
+                            row_text_parts.append(cell)
+                    for line in wrap_string_to_panel(
+                        context=context,
+                        string="; ".join(row_text_parts),
+                        padding=16,
+                    ):
+                        table_box.label(text=line)
+
             # ! list items
             if part["type"] == "list":
                 for list_item in part["content"]:
-
-                    step_number = int(list_item.split(".")[0])
+                    list_bits = list_item.split(".", 1)
+                    marker = list_bits[0] + "." if len(list_bits) > 1 else ""
+                    item_text = list_bits[1].strip() if len(list_bits) > 1 else list_item
 
                     # container for the whole list step
                     list_container = layout.column(align=True)
                     # split layout into two columns
                     list_split = list_container.split(
-                        factor=30 / context.region.width, align=True
+                        factor=min(0.22, 34 / context.region.width), align=True
                     )
 
                     # ask for step button
@@ -144,17 +216,18 @@ class CHAT_COMPANION_PT_output(POLYGONINGENIEUR_panel, Panel):
                         list_button.feature = "list_button"
 
                     # list text
-                    list_text = list_split.column(align=True)
-                    wrapped_list = wrap_string_to_panel(
-                        context=context, string=list_item, padding=30
+                    list_body = list_split.split(
+                        factor=min(0.18, 28 / context.region.width), align=True
                     )
-                    for index, list_line in enumerate(wrapped_list):
-                        if index == 0:
-                            list_text.label(text=list_line)
-                        elif step_number <= 9:
-                            list_text.label(text="    " + list_line)
-                        elif step_number >= 10:
-                            list_text.label(text="      " + list_line)
+                    list_marker = list_body.column(align=True)
+                    list_marker.label(text=marker)
+                    list_text = list_body.column(align=True)
+                    list_text.scale_y = 0.65
+                    wrapped_list = wrap_string_to_panel(
+                        context=context, string=item_text, padding=42
+                    )
+                    for list_line in wrapped_list:
+                        list_text.label(text=list_line)
 
                 # TODO ask for script for all steps
                 # layout.label(text="Get script for all steps")
@@ -163,12 +236,15 @@ class CHAT_COMPANION_PT_output(POLYGONINGENIEUR_panel, Panel):
             if part["type"] == "code" and len(part["content"]) > 0:
                 code_container = layout.column(align=True)
 
-                header = code_container.column_flow(columns=3, align=True)
+                header = code_container.column_flow(
+                    columns=2 if compact_width else 3, align=True
+                )
                 header.scale_y = 1.1
                 code_language = (
                     part["code_language"] if part["code_language"] else "Text"
                 )
-                header.label(text=code_language)
+                code_label = f"{code_language} ({len(part['content'])} lines)"
+                header.label(text=code_label, icon="TEXT")
 
                 # ! run code
                 run_code_button = header.row(align=True)
@@ -209,6 +285,17 @@ class CHAT_COMPANION_PT_output(POLYGONINGENIEUR_panel, Panel):
 
                 copy_buttons = header.row(align=True)
                 copy_buttons.alignment = "RIGHT"
+
+                is_expanded = index in expanded_code_indices
+                needs_collapse = len(part["content"]) > code_preview_lines
+                if needs_collapse:
+                    toggle_code_button = copy_buttons.column(align=True)
+                    toggle_code = toggle_code_button.operator(
+                        operator=CHAT_COMPANION_OT_toggle_answer_code.bl_idname,
+                        text="",
+                        icon="TRIA_DOWN" if is_expanded else "TRIA_RIGHT",
+                    )
+                    toggle_code.index = index
 
                 # ! copy to cursor in current script file
                 copy_to_cursor_button = copy_buttons.column(align=True)
@@ -276,17 +363,21 @@ class CHAT_COMPANION_PT_output(POLYGONINGENIEUR_panel, Panel):
                 # ! show code
                 box = code_container.box()
                 box.separator(factor=0.2)
-                for line_index, code_line in enumerate(part["content"]):
+                visible_code = part["content"]
+                if needs_collapse and not is_expanded:
+                    visible_code = visible_code[:code_preview_lines]
+                for line_index, code_line in enumerate(visible_code):
                     # container
                     code_line_container = box.row(align=True)
                     code_line_container.scale_y = 0.6
                     # line number
-                    code_line_number = code_line_container.column(align=True)
                     line_number = line_index + 1
-                    code_line_number.label(text=str(line_number))
-                    code_line_number.alignment = "LEFT"
-                    code_line_number.scale_x = 0.075
-                    code_line_number.enabled = False
+                    if not narrow_width:
+                        code_line_number = code_line_container.column(align=True)
+                        code_line_number.label(text=str(line_number))
+                        code_line_number.alignment = "LEFT"
+                        code_line_number.scale_x = 0.075
+                        code_line_number.enabled = False
                     # code text
                     code_line_text = code_line_container.column(align=True)
                     if part["error_line_number"] == line_number:
@@ -298,11 +389,17 @@ class CHAT_COMPANION_PT_output(POLYGONINGENIEUR_panel, Panel):
                     )
                     for wr_index, wrapped_line in enumerate(wrapped_code):
                         if wr_index > 0:
-                            code_line_text.label(text="    " + wrapped_line)
+                            code_line_text.label(text=wrapped_line)
                         else:
                             code_line_text.label(text=wrapped_line)
 
                     code_line_text.alignment = "EXPAND"
+                if needs_collapse and len(part["content"]) > len(visible_code):
+                    hidden_count = len(part["content"]) - len(visible_code)
+                    box.label(
+                        text=f"{hidden_count} more lines hidden",
+                        icon="HIDE_ON",
+                    )
                 box.separator(factor=0.2)
 
                 # ! show code error message box if error is present
@@ -365,11 +462,7 @@ class CHAT_COMPANION_PT_output(POLYGONINGENIEUR_panel, Panel):
                         tc_row.label(text=f"{i+1}. {tc.get('name', '?')}", icon=icon)
 
         # ! copy complete answer
-        has_content: bool = False
-        if len(answer_parts) > 0:
-            answer_part: list = answer_parts[0].get("content", [])
-            if len(answer_part[0]) > 0:
-                has_content = True
+        has_content: bool = bool(chat_properties.answer)
         if has_content:
             copy_answer_button = layout.row(align=True)
             copy_answer_button.enabled = can_send_prompt(context)
@@ -380,6 +473,74 @@ class CHAT_COMPANION_PT_output(POLYGONINGENIEUR_panel, Panel):
             )
             copy_all_props.content_type = "FULL"
             copy_all_props.content = chat_properties.answer
+
+    def draw_answer_actions(
+        self,
+        context: Context,
+        layout: UILayout,
+        chat_properties: ChatCompanionProperties,
+        addon_preferences: ChatCompanionPreferences,
+    ):
+        if not chat_properties.answer:
+            return
+
+        actions = layout.row(align=True)
+        actions.enabled = can_send_prompt(context)
+        open_answer = actions.operator(
+            operator=CHAT_COMPANION_OT_open_answer_text.bl_idname,
+            text="Open Full",
+            icon="TEXT",
+        )
+        open_answer.content = chat_properties.answer
+        copy_answer = actions.operator(
+            operator=CHAT_COMPANION_OT_copy.bl_idname,
+            text="",
+            icon="DUPLICATE",
+        )
+        copy_answer.content_type = "FULL"
+        copy_answer.content = chat_properties.answer
+        mode_row = layout.row(align=True)
+        mode_row.scale_y = 0.85
+        mode_row.prop(addon_preferences, "answer_display_mode", text="")
+        layout.separator(factor=0.2)
+
+    def draw_raw_answer(self, context: Context, layout: UILayout, answer: str):
+        raw_box = layout.box()
+        raw_box.scale_y = 0.58
+        for line in wrap_string_to_panel(context=context, string=answer, linebreak=True):
+            raw_box.label(text=line)
+
+    def parse_expanded_indices(self, value: str) -> set:
+        indices = set()
+        for item in value.split(","):
+            item = item.strip()
+            if not item:
+                continue
+            try:
+                indices.add(int(item))
+            except ValueError:
+                pass
+        return indices
+
+    def draw_list_line(
+        self,
+        context: Context,
+        layout: UILayout,
+        marker: str,
+        icon: str,
+        text: str,
+        padding: int,
+    ):
+        row = layout.split(factor=min(0.18, 24 / context.region.width), align=True)
+        marker_col = row.column(align=True)
+        if marker:
+            marker_col.label(text=marker)
+        else:
+            marker_col.label(text="", icon=icon)
+        text_col = row.column(align=True)
+        text_col.scale_y = 0.65
+        for line in wrap_string_to_panel(context=context, string=text, padding=padding):
+            text_col.label(text=line)
 
     def draw_error_message(self, context: Context, layout: UILayout):
         chat_properties: ChatCompanionProperties = context.scene.chat_companion_properties
