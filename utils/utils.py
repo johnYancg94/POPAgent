@@ -292,6 +292,8 @@ def can_send_prompt(context):
     api_key: str | None = None
     if addon_preferences.llm_organization == "openai":
         api_key = addon_preferences.open_ai_api_key
+    elif addon_preferences.llm_organization == "mimo":
+        api_key = addon_preferences.mimo_api_key
     elif addon_preferences.llm_organization == "deepseek":
         api_key = addon_preferences.deepseek_api_key
 
@@ -406,6 +408,8 @@ def get_system_info() -> str:
     addon_variant: str = "Full" if cc_globals.cc_full else "Free"
     if prefs.llm_organization == "openai":
         ai_model: str = prefs.open_ai_model
+    elif prefs.llm_organization == "mimo":
+        ai_model: str = prefs.mimo_model
     elif prefs.llm_organization == "deepseek":
         ai_model: str = prefs.deepseek_model
     else:

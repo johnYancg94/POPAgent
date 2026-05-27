@@ -28,6 +28,7 @@ from .properties.item_attachment import AttachmentPropertyGroup
 from .properties.item_image_attachment import CHAT_COMPANION_UL_item_image_attachment
 from .properties.item_image_attachment import ImageAttachmentPropertyGroup
 from .operators.operator_ask import CHAT_COMPANION_OT_ask
+from .operators.operator_cancel import CHAT_COMPANION_OT_cancel_request
 from .operators.operator_image_attachments import (
     CHAT_COMPANION_OT_add_blender_image,
     CHAT_COMPANION_OT_add_image_file,
@@ -52,6 +53,7 @@ from .operators.operator_history import CHAT_COMPANION_OT_move_history
 from .operators.operator_usage import CHAT_COMPANION_OT_clear_usage
 from .operators.operator_usage import CHAT_COMPANION_OT_export_usage_csv
 from .operators.operator_install_deps import CHAT_COMPANION_OT_install_deps
+from .operators.operator_change_llm import CHAT_COMPANION_OT_select_mimo
 from .operators.operator_change_llm import CHAT_COMPANION_OT_select_open_ai
 from .operators.operator_select_anthropic import CHAT_COMPANION_OT_select_anthropic
 from .operators.operator_skills import (
@@ -86,7 +88,7 @@ bl_info = {
     "author": "JhonYan",
     "description": "A Blender Agent based on OpenAI and DeepSeek.",
     "blender": (5, 1, 0),
-    "version": (1, 0, 0),
+    "version": (1, 1, 0),
     "location": "View3D",
     "warning": "",
     "doc_url": "",
@@ -112,6 +114,7 @@ classes = (
     ImageAttachmentPropertyGroup,
     CHAT_COMPANION_PT_tokens,
     CHAT_COMPANION_OT_ask,
+    CHAT_COMPANION_OT_cancel_request,
     CHAT_COMPANION_OT_add_blender_image,
     CHAT_COMPANION_OT_add_image_file,
     CHAT_COMPANION_OT_clear_image_attachments,
@@ -134,6 +137,7 @@ classes = (
     CHAT_COMPANION_OT_clear_usage,
     CHAT_COMPANION_OT_export_usage_csv,
     CHAT_COMPANION_OT_install_deps,
+    CHAT_COMPANION_OT_select_mimo,
     CHAT_COMPANION_OT_select_open_ai,
     CHAT_COMPANION_OT_select_anthropic,
     POPAGENT_OT_confirm_skill,
@@ -194,6 +198,7 @@ def register():
     pcoll.load("x_icon", os.path.join(chat_comp_icons_dir, "x.png"), "IMAGE")
     pcoll.load("money_icon", os.path.join(chat_comp_icons_dir, "money.png"), "IMAGE")
     pcoll.load("openai_icon", os.path.join(chat_comp_icons_dir, "openai.png"), "IMAGE")
+    pcoll.load("mimo_icon", os.path.join(chat_comp_icons_dir, "mimo.png"), "IMAGE")
     pcoll.load(
         "deepseek_icon", os.path.join(chat_comp_icons_dir, "deepseek.png"), "IMAGE"
     )

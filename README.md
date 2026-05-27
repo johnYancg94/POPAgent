@@ -1,4 +1,4 @@
-# POPAgent v1.0.0 — Blender AI Agent
+# POPAgent v1.1.0 — Blender AI Agent
 
 [![Blender](https://img.shields.io/badge/Blender-5.1+-blue.svg)](https://www.blender.org/)
 [![Python](https://img.shields.io/badge/Python-3.11+-green.svg)](https://www.python.org/)
@@ -216,7 +216,7 @@ POPAgent/
 
 ## 扩展集成
 
-> POPAgent v1.0.0 引入了一套轻量的第三方 Skill 注册系统。
+> POPAgent v1.1.0 引入了一套轻量的第三方 Skill 注册系统。
 
 任何 Blender 插件都可以将自己的工具注册为 POPAgent 的 Skill，路径为 `<your_addon>.agent_skills`：
 

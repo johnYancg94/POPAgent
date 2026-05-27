@@ -80,6 +80,8 @@ class CHAT_COMPANION_UL_item_history(bpy.types.UIList):
             llm_org_icon: int
             if item.llm_organization == "openai":
                 llm_org_icon = pcoll["openai_icon"].icon_id
+            elif item.llm_organization == "mimo":
+                llm_org_icon = pcoll["mimo_icon"].icon_id
             elif item.llm_organization == "deepseek":
                 llm_org_icon = pcoll["deepseek_icon"].icon_id
             else:

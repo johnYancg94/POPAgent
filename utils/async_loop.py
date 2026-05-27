@@ -31,6 +31,7 @@ import logging
 import gc
 import typing
 import bpy
+from . import cc_globals
 from concurrent.futures import ThreadPoolExecutor
 from asyncio import AbstractEventLoop, Task
 from logging import StreamHandler, Formatter, Logger
@@ -245,6 +246,11 @@ class AsyncModalOperatorMixin:
     def modal(self, context: Context, event):
         task = self.async_task
 
+        if task and task.done() and task.cancelled():
+            self.quit()
+            self._finish(context)
+            return {"FINISHED"}
+
         if task and task.done() and not task.cancelled():
             ex = task.exception()
             if ex is not None:
@@ -264,6 +270,9 @@ class AsyncModalOperatorMixin:
         return {"PASS_THROUGH"}
 
     def _finish(self, context: Context):
+        task_key = getattr(self, "bl_idname", None)
+        if task_key and cc_globals.active_async_tasks.get(task_key) is self.async_task:
+            cc_globals.active_async_tasks.pop(task_key, None)
         self._stop_async_task()
         context.window_manager.event_timer_remove(self.timer)
 
@@ -280,6 +289,9 @@ class AsyncModalOperatorMixin:
         # Download the previews asynchronously.
         self.signalling_future = future or asyncio.Future()
         self.async_task = asyncio.ensure_future(async_task)
+        task_key = getattr(self, "bl_idname", None)
+        if task_key:
+            cc_globals.active_async_tasks[task_key] = self.async_task
         self.log.debug("Created new task %r", self.async_task)
 
         # Start the async manager so everything happens.

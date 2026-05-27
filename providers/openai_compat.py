@@ -3,27 +3,27 @@ from .base import BaseProvider, LLMResponse, ToolCallRaw, StreamEvent, StreamPar
 
 
 class OpenAICompatProvider(BaseProvider):
-    """Handles OpenAI and DeepSeek (OpenAI-compatible) APIs."""
+    """Handles OpenAI-compatible APIs."""
 
     def __init__(self, org: str):
-        self._org = org  # "openai" or "deepseek"
+        self._org = org  # "openai", "mimo", or "deepseek"
 
     def get_api_key(self, prefs) -> str:
         if self._org == "openai":
             return prefs.open_ai_api_key
+        if self._org == "mimo":
+            return prefs.mimo_api_key
         return prefs.deepseek_api_key
 
     def get_url(self, prefs) -> str:
         if self._org == "openai":
             return prefs.open_ai_base_url.rstrip("/") + "/chat/completions"
+        if self._org == "mimo":
+            return prefs.mimo_base_url.rstrip("/") + "/chat/completions"
         return prefs.deepseek_base_url.rstrip("/") + "/chat/completions"
 
     def _is_mimo_request(self, prefs) -> bool:
-        if self._org != "openai":
-            return False
-        model = getattr(prefs, "open_ai_model", "")
-        base_url = getattr(prefs, "open_ai_base_url", "")
-        return model.startswith("mimo-") or "xiaomimimo.com" in base_url
+        return self._org == "mimo"
 
     def get_headers(self, prefs) -> dict:
         key = self.get_api_key(prefs)
@@ -36,7 +36,7 @@ class OpenAICompatProvider(BaseProvider):
         return headers
 
     def get_payload(self, prefs) -> dict:
-        model = prefs.open_ai_model if self._org == "openai" else prefs.deepseek_model
+        model = self._get_model(prefs)
         payload = {
             "temperature": 1.0,
             "top_p": 0.95 if self._is_mimo_request(prefs) else 1.0,
@@ -51,6 +51,13 @@ class OpenAICompatProvider(BaseProvider):
         elif self._org == "openai":
             payload["reasoning_effort"] = "medium"
         return payload
+
+    def _get_model(self, prefs) -> str:
+        if self._org == "openai":
+            return prefs.open_ai_model
+        if self._org == "mimo":
+            return prefs.mimo_model
+        return prefs.deepseek_model
 
     def get_schema(self) -> dict:
         return {
@@ -83,7 +90,7 @@ class OpenAICompatProvider(BaseProvider):
         url = self.get_url(prefs)
         headers = self.get_headers(prefs)
         # OpenAI: system is a message, already prepended by MessageBuilder.to_openai()
-        model = prefs.open_ai_model if self._org == "openai" else prefs.deepseek_model
+        model = self._get_model(prefs)
         body: dict = {
             "model": model,
             "messages": messages,

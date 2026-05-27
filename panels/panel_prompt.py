@@ -19,6 +19,7 @@ from ..operators.operator_ask import CHAT_COMPANION_OT_ask
 from ..utils.utils import wrap_string_to_panel, can_send_prompt
 from ..operators.operator_open_prefs import CHAT_COMPANION_OT_open_prefs
 from ..operators.operator_website import CHAT_COMPANION_OT_website
+from ..operators.operator_change_llm import CHAT_COMPANION_OT_select_mimo
 from ..operators.operator_change_llm import CHAT_COMPANION_OT_select_open_ai
 from ..operators.operator_select_anthropic import CHAT_COMPANION_OT_select_anthropic
 from ..operators.operator_full_version import CHAT_COMPANION_OT_full_version
@@ -87,6 +88,12 @@ class CHAT_COMPANION_PT_prompt(POLYGONINGENIEUR_panel, Panel):
             icon_value=pcoll["openai_icon"].icon_id,
             depress=True if prefs.llm_organization == "openai" else False,
         )
+        llms.operator(
+            operator=CHAT_COMPANION_OT_select_mimo.bl_idname,
+            text="MiMo",
+            icon_value=pcoll["mimo_icon"].icon_id,
+            depress=True if prefs.llm_organization == "mimo" else False,
+        )
         if cc_globals.cc_full:
             from ..full.operator_change_llm import CHAT_COMPANION_OT_select_deepseek_ai
 
@@ -119,6 +126,16 @@ class CHAT_COMPANION_PT_prompt(POLYGONINGENIEUR_panel, Panel):
             )
             model_info_link.url = "https://platform.openai.com/docs/models"
 
+        # ! mimo
+        elif prefs.llm_organization == "mimo":
+            mimo_model_container: UILayout = llm_selection.column(align=True)
+            mimo_model_selection = mimo_model_container.row(align=True)
+            mimo_model_selection.prop(prefs, "mimo_model", text="")
+            model_info_link = mimo_model_selection.operator(
+                operator=CHAT_COMPANION_OT_website.bl_idname, text="", icon="QUESTION"
+            )
+            model_info_link.url = "https://platform.xiaomimimo.com/docs/en-US/api/chat/openai-api"
+
         # ! deepseek
         elif prefs.llm_organization == "deepseek":
             deepseek_model_container: UILayout = llm_selection.column(align=True)
@@ -143,6 +160,8 @@ class CHAT_COMPANION_PT_prompt(POLYGONINGENIEUR_panel, Panel):
         api_key: str | None = None
         if prefs.llm_organization == "openai":
             api_key = prefs.open_ai_api_key
+        elif prefs.llm_organization == "mimo":
+            api_key = prefs.mimo_api_key
         elif prefs.llm_organization == "deepseek":
             api_key = prefs.deepseek_api_key
         elif prefs.llm_organization == "anthropic":
@@ -191,15 +210,25 @@ class CHAT_COMPANION_PT_prompt(POLYGONINGENIEUR_panel, Panel):
         prompt_icon: UILayout = prompt.column(align=True)
         prompt_icon.scale_y = 1.4
         prompt_icon.scale_x = 1.2
-        prompt_icon.enabled = can_send_prompt(context)
-        ask_operator = prompt_icon.operator(
-            operator=CHAT_COMPANION_OT_ask.bl_idname, text="", icon="RIGHTARROW_THIN"
-        )
+        if props.waiting_for_answer:
+            prompt_icon.enabled = True
+            prompt_icon.operator(
+                operator="chat_companion.cancel_request",
+                text="",
+                icon="CANCEL",
+            )
+        else:
+            prompt_icon.enabled = can_send_prompt(context)
+            ask_operator = prompt_icon.operator(
+                operator=CHAT_COMPANION_OT_ask.bl_idname,
+                text="",
+                icon="RIGHTARROW_THIN",
+            )
 
-        ask_operator.user_prompt = props.user_prompt
-        ask_operator.use_streaming = (
-            prefs.use_streaming and dependencies.dependencies_installed
-        )
+            ask_operator.user_prompt = props.user_prompt
+            ask_operator.use_streaming = (
+                prefs.use_streaming and dependencies.dependencies_installed
+            )
 
         if props.multimodal_enabled:
             self._draw_image_inputs(context, layout, props, prefs)
@@ -284,6 +313,8 @@ class CHAT_COMPANION_PT_prompt(POLYGONINGENIEUR_panel, Panel):
 def _provider_for_prefs(prefs):
     if prefs.llm_organization == "openai":
         return OpenAICompatProvider("openai")
+    if prefs.llm_organization == "mimo":
+        return OpenAICompatProvider("mimo")
     if prefs.llm_organization == "deepseek":
         return OpenAICompatProvider("deepseek")
     if prefs.llm_organization == "anthropic":

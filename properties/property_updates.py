@@ -178,6 +178,8 @@ class PropertyUpdates:
 
         if org == "openai":
             provider = OpenAICompatProvider("openai")
+        elif org == "mimo":
+            provider = OpenAICompatProvider("mimo")
         elif org == "deepseek":
             provider = OpenAICompatProvider("deepseek")
         elif org == "anthropic":

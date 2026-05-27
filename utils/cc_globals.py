@@ -19,3 +19,5 @@ cc_full: bool = True
 preview_collections = {}
 
 request_failed = False
+
+active_async_tasks = {}

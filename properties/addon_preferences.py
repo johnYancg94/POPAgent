@@ -40,6 +40,11 @@ class ChatCompanionPreferences(AddonPreferences):
             "...",
         ),
         (
+            "mimo",
+            "MiMo",
+            "...",
+        ),
+        (
             "deepseek",
             "DeepSeek",
             "...",
@@ -52,11 +57,14 @@ class ChatCompanionPreferences(AddonPreferences):
     )
 
     _open_ai_models = (
-        ("mimo-v2.5-pro", "MiMo V2.5 Pro", "MiMo V2.5 Pro"),
-        ("mimo-v2.5", "MiMo V2.5", "MiMo V2.5"),
         ("gpt-5.3-codex", "GPT-5.3 Codex", "GPT-5.3 Codex"),
         ("gpt-5.5", "GPT-5.5", "GPT-5.5"),
         ("gpt-5.4-mini", "GPT-5.4 Mini", "GPT-5.4 Mini"),
+    )
+
+    _mimo_models = (
+        ("mimo-v2.5-pro", "MiMo V2.5 Pro", "MiMo V2.5 Pro"),
+        ("mimo-v2.5", "MiMo V2.5", "MiMo V2.5"),
     )
 
     _deepseek_models = (
@@ -115,6 +123,18 @@ class ChatCompanionPreferences(AddonPreferences):
     open_ai_base_url: props.StringProperty(
         name="Base URL",
         description="OpenAI-compatible API base URL",
+        default="https://api.openai.com/v1",
+    )
+
+    mimo_api_key: props.StringProperty(
+        name="API Key.",
+        description="Your MiMo API key",
+        # subtype="PASSWORD",
+    )
+
+    mimo_base_url: props.StringProperty(
+        name="Base URL",
+        description="MiMo OpenAI-compatible API base URL",
         default="https://api.xiaomimimo.com/v1",
     )
 
@@ -168,6 +188,14 @@ class ChatCompanionPreferences(AddonPreferences):
         description="Choose what OpenAI model you want to use",
         items=_open_ai_models,
         default=_open_ai_models[0][0],
+        update=PropertyUpdates.update_llm_details,
+    )
+
+    mimo_model: props.EnumProperty(
+        name="Select MiMo model:",
+        description="Choose what MiMo model you want to use",
+        items=_mimo_models,
+        default=_mimo_models[0][0],
         update=PropertyUpdates.update_llm_details,
     )
 
@@ -333,11 +361,34 @@ class ChatCompanionPreferences(AddonPreferences):
 
         api_keys_text_fields.separator()
 
+        # ! mimo
+        mimo_split: UILayout = api_keys_text_fields.split(align=True, factor=2 / 5)
+        mimo_left: UILayout = mimo_split.row(align=True)
+        mimo_left.alignment = "RIGHT"
+        mimo_left.label(text="MiMo API key", icon_value=pcoll["mimo_icon"].icon_id)
+        mimo_right: UILayout = mimo_split.column(align=True)
+        mimo_right.prop(self, "mimo_api_key", text="")
+        mimo_right.prop(self, "mimo_base_url", text="Base URL")
+        mimo_right.prop(self, "mimo_model", text="Model")
+        mimo_buttons: UILayout = mimo_right.row(align=True)
+        mimo_key_website: CHAT_COMPANION_OT_website = mimo_buttons.operator(
+            operator=CHAT_COMPANION_OT_website.bl_idname, text="Get key", icon="KEY_HLT"
+        )
+        mimo_key_website.url = "https://platform.xiaomimimo.com/"
+        mimo_docs: CHAT_COMPANION_OT_website = mimo_buttons.operator(
+            operator=CHAT_COMPANION_OT_website.bl_idname,
+            text="API Docs",
+            icon="QUESTION",
+        )
+        mimo_docs.url = "https://platform.xiaomimimo.com/docs/en-US/api/chat/openai-api"
+
+        api_keys_text_fields.separator()
+
         # ! deepseek
         deepseek_split: UILayout = api_keys_text_fields.split(align=True, factor=2 / 5)
         deepseek_left: UILayout = deepseek_split.row(align=True)
         deepseek_left.alignment = "RIGHT"
-        deepseek_left.label(text="DeepSeek API key", icon="OUTLINER_OB_LIGHT")
+        deepseek_left.label(text="DeepSeek API key", icon_value=pcoll["deepseek_icon"].icon_id)
         deepseek_right: UILayout = deepseek_split.column(align=True)
         deepseek_right.prop(self, "deepseek_api_key", text="")
         deepseek_right.prop(self, "deepseek_base_url", text="Base URL")

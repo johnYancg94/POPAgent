@@ -19,6 +19,7 @@ from typing import Any
 from .skill_registry import get_skill_by_name, is_handler_valid
 from .main_thread import run_on_main
 from .confirm_dialog import ask_confirmation
+from .schema_validation import validate_arguments
 from ..providers.base import ToolCallRaw
 
 
@@ -50,6 +51,9 @@ async def run(call: ToolCallRaw, context) -> dict:
 
     meta: dict = skill.get("metadata", {})
     handler = skill["handler"]
+    validation_error = validate_arguments(call.arguments, skill.get("parameters"))
+    if validation_error:
+        return _make_error("invalid_arguments", validation_error)
 
     # Phase 3: open modal popup when metadata requires.
     # never -> no popup; first -> popup once per session unless trusted; always -> every call.

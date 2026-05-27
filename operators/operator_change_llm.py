@@ -34,3 +34,20 @@ class CHAT_COMPANION_OT_select_open_ai(Operator):
         prefs.llm_organization = "openai"
 
         return {"FINISHED"}
+
+
+class CHAT_COMPANION_OT_select_mimo(Operator):
+    bl_idname = "chat_companion.select_mimo"
+    bl_label = "MiMo"
+    bl_description = "MiMo models via the OpenAI-compatible chat API"
+    bl_options = {"REGISTER", "INTERNAL"}
+
+    def execute(self, context):
+        prefs: ChatCompanionPreferences = context.preferences.addons[
+            base_package
+        ].preferences
+
+        # triggers ProperyUpdate.update_llm_details
+        prefs.llm_organization = "mimo"
+
+        return {"FINISHED"}

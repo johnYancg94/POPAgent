@@ -44,6 +44,7 @@ from ..agent_core import skill_registry, executor
 from ..agent_core.message_builder import MessageBuilder, ToolCall, history_context_items
 from ..agent_core.context_builder import build_scene_summary
 from ..agent_core.vision_inputs import collect_enabled_image_payloads
+from ..agent_core.retry import RetryPolicy, run_with_retries
 from ..providers import OpenAICompatProvider, AnthropicProvider
 
 
@@ -75,6 +76,8 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         api_key: str | None = None
         if addon_preferences.llm_organization == "openai":
             api_key = addon_preferences.open_ai_api_key
+        elif addon_preferences.llm_organization == "mimo":
+            api_key = addon_preferences.mimo_api_key
         elif addon_preferences.llm_organization == "deepseek":
             api_key = addon_preferences.deepseek_api_key
         elif addon_preferences.llm_organization == "anthropic":
@@ -165,7 +168,17 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
             print_waiting_string(context, icon_set="CONNECTING", text="Connecting"),
         ]
         # ! query
-        async_return: Future = await asyncio.gather(*coroutines)
+        try:
+            async_return: Future = await asyncio.gather(*coroutines)
+        except asyncio.CancelledError:
+            props.waiting_for_answer = False
+            props.is_connecting = False
+            props.is_streaming = False
+            props.waiting_string = "Cancelled"
+            props.waiting_icon = "CANCEL"
+            self.report({"INFO"}, "POPAgent request cancelled.")
+            self.quit()
+            return
 
         # update view_3d (where addon is located in (context))
         try:
@@ -265,23 +278,20 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                 # ! streaming
                 if self.use_streaming:
                     props.is_streaming = True
-                    if prefs.llm_organization in {"openai", "deepseek"}:
+                    if prefs.llm_organization in {"openai", "mimo", "deepseek"}:
                         payload["stream_options"] = {"include_usage": True}
                     print(
                         f"Sending streaming request:\n{props.api_url = }\n{props.api_headers}"
                     )
                     started_at = time.perf_counter()
-                    async with client.stream(
-                        "POST",
+                    status_code, raw_usage = await self._stream_with_retries(
+                        context,
+                        client,
                         url=props.api_url,
                         headers=json.loads(props.api_headers),
-                        json=payload,
+                        body=payload,
                         timeout=prefs.timeout,
-                    ) as response:
-                        # to have http errors also raise exceptions
-                        response.raise_for_status()
-
-                        raw_usage = await self.handle_stream_chunk(context, response)
+                    )
 
                     cc_globals.request_failed = False
                     add_usage_record(
@@ -291,7 +301,7 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                         mode="streaming",
                         prompt=self.user_prompt,
                         latency_ms=(time.perf_counter() - started_at) * 1000,
-                        status_code=response.status_code,
+                        status_code=status_code,
                     )
 
                     if props.answer == "":
@@ -332,10 +342,10 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
             )
         except httpx.TooManyRedirects as e:
             # Tell the user their URL was bad and try a different one
-            self.show_request_error(
+            self.show_general_error(
                 context=context,
                 error=e,
-                response=response,
+                title="Redirect Error",
                 solution="The URL to the server is wrong. Please report this error.",
             )
         except httpx.RequestError as e:
@@ -347,40 +357,42 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
             )
         except httpx.HTTPError as e:
             # https://platform.openai.com/docs/guides/error-codes/api-errors
-            if response.status_code == 401:
+            http_response = getattr(e, "response", None)
+            status_code = getattr(http_response, "status_code", 0)
+            if status_code == 401:
                 self.show_general_error(
                     context,
                     error=e,
                     title="HTTP 401 Error",
                     solution="Possible solution:\nEnsure the API key used is correct or generate a new one.\nNever share your API keys with anyone!",
                 )
-            elif response.status_code == 429:
+            elif status_code == 429:
                 self.show_general_error(
                     context,
                     error=e,
                     title="HTTP 429 Error",
                     solution="Possible causes:\nLikely the servers are experiencing high traffic. Please retry your prompt after a brief wait or try another AI model.\n\nIt is also possible that you are sending prompts too quickly.\n\nOr you have hit your maximum monthly spend (hard limit) if you are using OpenAI, which you can view in the account billing section https://platform.openai.com/account/billing/limits.\n",
                 )
-            elif response.status_code == 500:
+            elif status_code == 500:
                 self.show_general_error(
                     context,
                     error=e,
                     title="HTTP 500 Error",
                     solution="The server had an error while processing your request.\nPossible solution:\nRetry your request after a brief wait. For OpenAI you can check the status page: https://status.openai.com/",
                 )
-            elif response.status_code == 502:
+            elif status_code == 502:
                 self.show_general_error(
                     context,
                     error=e,
                     title="HTTP 502 Error",
                     solution="The server had an error while processing your request.\nPossible solution:\nRetry your request after a brief wait. For OpenAI you can check the status page: https://status.openai.com/",
                 )
-            elif response.status_code == 400:
+            elif status_code == 400:
                 text_400: str = (
                     "Possible solution:\nThere can be multiple reasons. It is possible that the servers are experiencing high traffic. Please retry your prompt after a brief wait. Feel free to report the error."
                 )
                 try:
-                    error_details: dict = e.response.json()
+                    error_details: dict = http_response.json()
                     text_400 = error_details.get("error").get("message")
                     print(f"Error details: {error_details}")
                 except Exception:
@@ -388,7 +400,7 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                 self.show_general_error(
                     context=context, error=e, title="HTTP 400 Error", solution=text_400
                 )
-            elif response.status_code == 404:
+            elif status_code == 404:
                 self.show_general_error(
                     context=context,
                     error=e,
@@ -503,10 +515,12 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         """Original non-streaming single-turn chat path."""
         print(f"Sending post request (plain):\n{props.api_url = }")
         started_at = time.perf_counter()
-        response = await client.post(
+        response = await self._post_with_retries(
+            context,
+            client,
             url=props.api_url,
             headers=json.loads(props.api_headers),
-            json=payload,
+            body=payload,
             timeout=prefs.timeout,
         )
         response.raise_for_status()
@@ -595,6 +609,8 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         org = prefs.llm_organization
         if org == "openai":
             provider = OpenAICompatProvider("openai")
+        elif org == "mimo":
+            provider = OpenAICompatProvider("mimo")
         elif org == "deepseek":
             provider = OpenAICompatProvider("deepseek")
         elif org == "anthropic":
@@ -680,10 +696,7 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                     include_image_results=include_image_results,
                     include_reasoning_content=(
                         org == "deepseek"
-                        or (
-                            org == "openai"
-                            and getattr(prefs, "open_ai_model", "").startswith("mimo-")
-                        )
+                        or org == "mimo"
                     ),
                 )
                 url, headers, body = provider.build_request(
@@ -701,8 +714,13 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                 if llm_resp is None:
                     return
             else:
-                response = await client.post(
-                    url=url, headers=headers, json=body, timeout=prefs.timeout
+                response = await self._post_with_retries(
+                    context,
+                    client,
+                    url=url,
+                    headers=headers,
+                    body=body,
+                    timeout=prefs.timeout,
                 )
                 response.raise_for_status()
                 cc_globals.request_failed = False
@@ -782,12 +800,12 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         text deltas live to props.answer, return the assembled LLMResponse.
 
         Returns None on error (caller should bail out)."""
-        parser = provider.create_stream_parser()
-        running_text = ""
         props.is_streaming = True
-        props.answer = ""
-        props.answer_parts = json.dumps([])
-        try:
+        async def operation():
+            parser = provider.create_stream_parser()
+            running_text = ""
+            props.answer = ""
+            props.answer_parts = json.dumps([])
             async with client.stream(
                 "POST", url=url, headers=headers, json=body,
                 timeout=prefs.timeout,
@@ -815,12 +833,97 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                                 pass
                         # tool_call / done events handled at finalize().
             return parser.finalize()
+
+        def on_retry(attempt, attempts, exc, delay):
+            props.waiting_string = (
+                f"Retrying stream {attempt + 1}/{attempts} "
+                f"after {type(exc).__name__}"
+            )
+            props.waiting_icon = "FILE_REFRESH"
+            try:
+                if context.area is not None:
+                    context.area.tag_redraw()
+            except Exception:
+                pass
+
+        try:
+            return await run_with_retries(
+                operation,
+                policy=RetryPolicy(max_attempts=3),
+                on_retry=on_retry,
+            )
         except Exception as exc:
             print(f"[agent] streaming error: {exc}")
             self.show_general_error(context, solution=f"Streaming failed: {exc}")
             return None
         finally:
             props.is_streaming = False
+
+    async def _post_with_retries(self, context, client, *, url, headers, body, timeout):
+        props: ChatCompanionProperties = context.scene.chat_companion_properties
+
+        async def operation():
+            response = await client.post(
+                url=url,
+                headers=headers,
+                json=body,
+                timeout=timeout,
+            )
+            response.raise_for_status()
+            return response
+
+        def on_retry(attempt, attempts, exc, delay):
+            props.waiting_string = (
+                f"Retrying request {attempt + 1}/{attempts} "
+                f"after {type(exc).__name__}"
+            )
+            props.waiting_icon = "FILE_REFRESH"
+            try:
+                if context.area is not None:
+                    context.area.tag_redraw()
+            except Exception:
+                pass
+
+        return await run_with_retries(
+            operation,
+            policy=RetryPolicy(max_attempts=3),
+            on_retry=on_retry,
+        )
+
+    async def _stream_with_retries(self, context, client, *, url, headers, body, timeout):
+        props: ChatCompanionProperties = context.scene.chat_companion_properties
+
+        async def operation():
+            props.answer = ""
+            props.answer_parts = json.dumps([])
+            async with client.stream(
+                "POST",
+                url=url,
+                headers=headers,
+                json=body,
+                timeout=timeout,
+            ) as response:
+                response.raise_for_status()
+                raw_usage = await self.handle_stream_chunk(context, response)
+                return response.status_code, raw_usage
+
+        def on_retry(attempt, attempts, exc, delay):
+            props.waiting_string = (
+                f"Retrying stream {attempt + 1}/{attempts} "
+                f"after {type(exc).__name__}"
+            )
+            props.waiting_icon = "FILE_REFRESH"
+            try:
+                if context.area is not None:
+                    context.area.tag_redraw()
+            except Exception:
+                pass
+
+        return await run_with_retries(
+            operation,
+            policy=RetryPolicy(max_attempts=3),
+            on_retry=on_retry,
+        )
 
     def _finish_agent(self, context, props, prefs, mb, final_text: str,
                       tool_calls: list | None = None):

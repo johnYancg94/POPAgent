@@ -44,6 +44,8 @@ def get_current_model(prefs) -> str:
     org = getattr(prefs, "llm_organization", "")
     if org == "openai":
         return getattr(prefs, "open_ai_model", "")
+    if org == "mimo":
+        return getattr(prefs, "mimo_model", "")
     if org == "deepseek":
         return getattr(prefs, "deepseek_model", "")
     if org == "anthropic":
