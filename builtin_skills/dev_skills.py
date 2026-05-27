@@ -1,8 +1,8 @@
 # -*- coding: utf-8 -*-
 """
-Developer-mode skill: execute arbitrary Python code in Blender's main thread.
+Developer skill: execute arbitrary Python code in Blender's main thread.
 
-Registered only when prefs.developer_mode is True.
+Registered by default as a built-in POPAgent skill.
 The agent loop's normal metadata gates still apply; this skill sets
 requires_confirmation="always" so the executor logs a warning on every call.
 """
@@ -47,7 +47,6 @@ RUN_PYTHON = {
     "name": "dev.run_python",
     "description": (
         "Execute arbitrary Python code in Blender's main thread. "
-        "Available ONLY in developer mode. "
         "Use with extreme caution — code runs with full Blender API access. "
         "Returns captured stdout output and any exception tracebacks."
     ),

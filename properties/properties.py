@@ -78,6 +78,13 @@ class ChatCompanionProperties(PropertyGroup):
 
     user_prompt_tokens: IntProperty(update=PropertyUpdates.update_ui)
 
+    multimodal_enabled: BoolProperty(
+        name="Multimodal",
+        description="Allow POPAgent to send image inputs to compatible models",
+        default=False,
+        update=PropertyUpdates.update_ui,
+    )
+
     answer: StringProperty(
         name="AI Answer",
         description="Answer from LLM API server",
@@ -206,6 +213,21 @@ class ChatCompanionProperties(PropertyGroup):
         name="Select Text Block",
         description="The selected text block will be added as an attachment",
         update=PropertyUpdates.update_selected_text_block,
+    )
+    # endregion
+
+    # region image attachments
+    selected_image_attachment_item: IntProperty(
+        name="Selected Image",
+        description="Currently selected image attachment",
+        default=0,
+        update=PropertyUpdates.update_ui,
+    )
+
+    selected_blender_image: StringProperty(
+        name="Blender Image",
+        description="The selected Blender image will be sent with the prompt",
+        update=PropertyUpdates.update_ui,
     )
     # endregion
 

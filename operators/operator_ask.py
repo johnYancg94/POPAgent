@@ -41,8 +41,9 @@ from ..properties.addon_preferences import ChatCompanionPreferences
 from ..properties.property_updates import PropertyUpdates
 from .. import __package__ as base_package
 from ..agent_core import skill_registry, executor
-from ..agent_core.message_builder import MessageBuilder, ToolCall
+from ..agent_core.message_builder import MessageBuilder, ToolCall, history_context_items
 from ..agent_core.context_builder import build_scene_summary
+from ..agent_core.vision_inputs import collect_enabled_image_payloads
 from ..providers import OpenAICompatProvider, AnthropicProvider
 
 
@@ -211,24 +212,25 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         )
 
         # ! add enabled history to messages
-        for previous_history in reversed(history):
-            if not previous_history.is_error and previous_history.is_enabled:
-                all_messages.append(
-                    {
-                        "role": props.req_schema_role_user,
-                        props.req_schema_parts: construct_parts(
-                            previous_history.user_prompt
-                        ),
-                    }
-                )
-                all_messages.append(
-                    {
-                        "role": props.req_schema_role_assistant,
-                        props.req_schema_parts: construct_parts(
-                            previous_history.answer
-                        ),
-                    }
-                )
+        max_history_context = getattr(prefs, "max_history_context", 5)
+        history_context = history_context_items(history, max_history_context)
+        for previous_history in reversed(history_context):
+            all_messages.append(
+                {
+                    "role": props.req_schema_role_user,
+                    props.req_schema_parts: construct_parts(
+                        previous_history.user_prompt
+                    ),
+                }
+            )
+            all_messages.append(
+                {
+                    "role": props.req_schema_role_assistant,
+                    props.req_schema_parts: construct_parts(
+                        previous_history.answer
+                    ),
+                }
+            )
 
         # add current prompt and attachments
         attachments = context.scene.chat_companion_attachments
@@ -588,6 +590,7 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         prefs: ChatCompanionPreferences = context.preferences.addons[
             base_package
         ].preferences
+        history: bpy_prop_collection = context.scene.chat_companion_history
 
         org = prefs.llm_organization
         if org == "openai":
@@ -606,6 +609,10 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
             "mode, and enabled addons may change between chat turns. For requests "
             "about the current scene or current Blender state, call the relevant "
             "query tool again and do not rely on prior chat answers."
+            "\n\nBlender Python API rule: before writing or executing Blender "
+            "Python when API names, operator parameters, context requirements, "
+            "or version behavior are uncertain, call `blender.api_search` and "
+            "base the code on the returned official documentation results."
         )
         try:
             scene_summary = await build_scene_summary()
@@ -616,13 +623,8 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         skills = skill_registry.all_skills()
         tools = provider.skills_to_tools(skills)
 
-        # Agent turns operate on live Blender state. Natural-language scene
-        # summaries in chat history become stale quickly, so start from a fresh
-        # tool-capable turn and let the agent query current state again.
-        mb = MessageBuilder()
-        mb.append_user(self.user_prompt)
-
         max_iters = getattr(prefs, "agent_max_iters", 10)
+        max_history_context = getattr(prefs, "max_history_context", 5)
         # Anti-loop: track last 3 (skill, args_hash) pairs.
         recent_calls: list[tuple[str, int]] = []
         # Collect all tool calls made in this turn for history.
@@ -632,6 +634,31 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         # provider declares support. Falls back to non-streaming otherwise.
         use_stream = bool(getattr(prefs, "use_streaming", False)) and \
             provider.supports_streaming_with_tools()
+        multimodal_enabled = bool(getattr(props, "multimodal_enabled", False))
+        include_image_results = (
+            multimodal_enabled and provider.supports_image_input(prefs)
+        )
+        user_images = []
+        if include_image_results:
+            user_images = collect_enabled_image_payloads(
+                context.scene.chat_companion_image_attachments
+            )
+        if include_image_results:
+            system_text += (
+                "\n\nVision rule: when the user asks about what is visible in "
+                "the current viewport, call `blender.viewport_screenshot`; its "
+                "result will be attached as an image in the next model turn."
+            )
+        else:
+            system_text += (
+                "\n\nVision rule: the current model configuration does not "
+                "support image input. Do not call `blender.viewport_screenshot` "
+                "to visually inspect the scene; explain that visual reading "
+                "requires enabling multimodal input and using a compatible model."
+            )
+
+        mb = MessageBuilder.from_history(history, max_items=max_history_context)
+        mb.append_user(self.user_prompt, images=user_images)
 
         props.is_connecting = False
 
@@ -641,6 +668,7 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                 system_for_wire, messages = mb.to_anthropic(
                     system_text,
                     tool_name_mapper=provider._to_wire_tool_name,
+                    include_image_results=include_image_results,
                 )
                 url, headers, body = provider.build_request(
                     prefs, messages, tools, system=system_for_wire, stream=use_stream
@@ -649,6 +677,7 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                 messages = mb.to_openai(
                     system_prompt=system_text,
                     tool_name_mapper=provider._to_wire_tool_name,
+                    include_image_results=include_image_results,
                     include_reasoning_content=(
                         org == "deepseek"
                         or (
@@ -726,8 +755,7 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                         return
 
                     result = await executor.run(tc, context)
-                    result_str = json.dumps(result, ensure_ascii=False)
-                    mb.append_tool_result(tc.id, tc.name, result_str)
+                    mb.append_tool_result(tc.id, tc.name, result)
                     all_tool_calls.append({
                         "name": tc.name,
                         "arguments": tc.arguments,

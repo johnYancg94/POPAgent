@@ -30,11 +30,12 @@ class ToolCall:
 class _Msg:
     role: str                              # "user" | "assistant" | "tool_result"
     text: str = ""
+    images: list[dict[str, str]] = field(default_factory=list)
     reasoning_content: str = ""
     tool_calls: list[ToolCall] = field(default_factory=list)
     tool_result_id: str = ""              # for tool_result role
     tool_result_name: str = ""
-    tool_result_content: str = ""
+    tool_result_content: Any = ""
 
 
 # ─── Builder ────────────────────────────────────────────────────────────────
@@ -47,8 +48,10 @@ class MessageBuilder:
 
     # ── Append helpers ──
 
-    def append_user(self, text: str) -> None:
-        self._messages.append(_Msg(role="user", text=text))
+    def append_user(
+        self, text: str, images: list[dict[str, str]] | None = None
+    ) -> None:
+        self._messages.append(_Msg(role="user", text=text, images=images or []))
 
     def append_assistant(self, text: str) -> None:
         self._messages.append(_Msg(role="assistant", text=text))
@@ -71,13 +74,12 @@ class MessageBuilder:
     def append_tool_result(
         self, call_id: str, name: str, result: Any
     ) -> None:
-        content = result if isinstance(result, str) else json.dumps(result, ensure_ascii=False)
         self._messages.append(
             _Msg(
                 role="tool_result",
                 tool_result_id=call_id,
                 tool_result_name=name,
-                tool_result_content=content,
+                tool_result_content=result,
             )
         )
 
@@ -88,6 +90,7 @@ class MessageBuilder:
         system_prompt: str | None = None,
         tool_name_mapper=None,
         include_reasoning_content: bool = False,
+        include_image_results: bool = False,
     ) -> list[dict]:
         """Emit OpenAI-compatible messages list."""
         map_tool_name = tool_name_mapper or (lambda name: name)
@@ -96,7 +99,15 @@ class MessageBuilder:
             out.append({"role": "system", "content": system_prompt})
         for msg in self._messages:
             if msg.role == "user":
-                out.append({"role": "user", "content": msg.text})
+                if include_image_results and msg.images:
+                    content = []
+                    if msg.text:
+                        content.append({"type": "text", "text": msg.text})
+                    for image in msg.images:
+                        content.append(_openai_image_block(image))
+                    out.append({"role": "user", "content": content})
+                else:
+                    out.append({"role": "user", "content": msg.text})
             elif msg.role == "assistant" and msg.tool_calls:
                 assistant_msg = {
                     "role": "assistant",
@@ -119,24 +130,61 @@ class MessageBuilder:
             elif msg.role == "assistant":
                 out.append({"role": "assistant", "content": msg.text})
             elif msg.role == "tool_result":
-                out.append({
-                    "role": "tool",
-                    "tool_call_id": msg.tool_result_id,
-                    "content": msg.tool_result_content,
-                })
+                screenshot = _viewport_screenshot_image(
+                    msg.tool_result_name,
+                    msg.tool_result_content,
+                )
+                if include_image_results and screenshot:
+                    out.append({
+                        "role": "tool",
+                        "tool_call_id": msg.tool_result_id,
+                        "content": (
+                            "Viewport screenshot captured. The next message "
+                            "contains the PNG image for visual analysis."
+                        ),
+                    })
+                    out.append({
+                        "role": "user",
+                        "content": [
+                            {
+                                "type": "text",
+                                "text": (
+                                    "This is the current Blender viewport "
+                                    "screenshot returned by the tool. Use it "
+                                    "as visual evidence for the user's request."
+                                ),
+                            },
+                            _openai_image_block(screenshot),
+                        ],
+                    })
+                else:
+                    out.append({
+                        "role": "tool",
+                        "tool_call_id": msg.tool_result_id,
+                        "content": _stringify_tool_result(msg.tool_result_content),
+                    })
         return out
 
     def to_anthropic(
         self,
         system_prompt: str | None = None,
         tool_name_mapper=None,
+        include_image_results: bool = False,
     ) -> tuple[str, list[dict]]:
         """Return (system_text, messages_list) for the Anthropic Messages API."""
         map_tool_name = tool_name_mapper or (lambda name: name)
         messages: list[dict] = []
         for msg in self._messages:
             if msg.role == "user":
-                messages.append({"role": "user", "content": msg.text})
+                if include_image_results and msg.images:
+                    content = []
+                    if msg.text:
+                        content.append({"type": "text", "text": msg.text})
+                    for image in msg.images:
+                        content.append(_anthropic_image_block(image))
+                    messages.append({"role": "user", "content": content})
+                else:
+                    messages.append({"role": "user", "content": msg.text})
             elif msg.role == "assistant" and msg.tool_calls:
                 content: list[dict] = []
                 if msg.text:
@@ -155,13 +203,30 @@ class MessageBuilder:
                     "content": [{"type": "text", "text": msg.text}],
                 })
             elif msg.role == "tool_result":
+                screenshot = _viewport_screenshot_image(
+                    msg.tool_result_name,
+                    msg.tool_result_content,
+                )
+                if include_image_results and screenshot:
+                    content = [
+                        {
+                            "type": "text",
+                            "text": (
+                                "Viewport screenshot captured. Use this PNG "
+                                "image as visual evidence for the user's request."
+                            ),
+                        },
+                        _anthropic_image_block(screenshot),
+                    ]
+                else:
+                    content = _stringify_tool_result(msg.tool_result_content)
                 messages.append({
                     "role": "user",
                     "content": [
                         {
                             "type": "tool_result",
                             "tool_use_id": msg.tool_result_id,
-                            "content": msg.tool_result_content,
+                            "content": content,
                         }
                     ],
                 })
@@ -173,12 +238,73 @@ class MessageBuilder:
     def from_history(
         cls,
         history_items,  # bpy_prop_collection of HistoryPropertyGroup
+        max_items: int | None = None,
     ) -> "MessageBuilder":
         """Reconstruct from Blender property history (plain chat messages only)."""
         mb = cls()
-        for item in reversed(history_items):
-            if item.is_error or not item.is_enabled:
-                continue
+        for item in reversed(history_context_items(history_items, max_items)):
             mb.append_user(item.user_prompt)
             mb.append_assistant(item.answer)
         return mb
+
+
+def history_context_items(history_items, max_items: int | None = None) -> list:
+    items = [
+        item
+        for item in history_items
+        if not item.is_error and item.is_enabled
+    ]
+    if max_items is not None:
+        items = items[:max(0, max_items)]
+    return items
+
+
+def _stringify_tool_result(result: Any) -> str:
+    if isinstance(result, str):
+        return result
+    return json.dumps(result, ensure_ascii=False)
+
+
+def _openai_image_block(image: dict[str, str]) -> dict:
+    return {
+        "type": "image_url",
+        "image_url": {
+            "url": f"data:{image['media_type']};base64,{image['data']}",
+        },
+    }
+
+
+def _anthropic_image_block(image: dict[str, str]) -> dict:
+    return {
+        "type": "image",
+        "source": {
+            "type": "base64",
+            "media_type": image["media_type"],
+            "data": image["data"],
+        },
+    }
+
+
+def _viewport_screenshot_image(name: str, result: Any) -> dict[str, str] | None:
+    if name != "blender.viewport_screenshot":
+        return None
+
+    payload = result
+    if isinstance(payload, str):
+        try:
+            payload = json.loads(payload)
+        except json.JSONDecodeError:
+            return None
+    if not isinstance(payload, dict) or not payload.get("ok"):
+        return None
+
+    data = payload.get("image_base64")
+    if not isinstance(data, str) or not data:
+        return None
+
+    fmt = str(payload.get("format") or "png").lower().lstrip(".")
+    if fmt == "jpg":
+        fmt = "jpeg"
+    if fmt not in {"png", "jpeg", "gif", "webp"}:
+        fmt = "png"
+    return {"data": data, "media_type": f"image/{fmt}"}

@@ -67,7 +67,7 @@ def _handler_viewport_screenshot(context=None) -> dict:
     path = tmp.name
 
     try:
-        bpy.ops.screen.screenshot(filepath=path, full=False)
+        bpy.ops.screen.screenshot(filepath=path)
         with open(path, "rb") as f:
             data = base64.b64encode(f.read()).decode("utf-8")
         return {"ok": True, "image_base64": data, "format": "png"}

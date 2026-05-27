@@ -18,7 +18,6 @@ from .panels.panel_prompt import CHAT_COMPANION_PT_prompt
 from .panels.panel_attachments import CHAT_COMPANION_PT_attachments
 from .panels.panel_output import CHAT_COMPANION_PT_output
 from .panels.panel_history import CHAT_COMPANION_PT_history
-from .panels.panel_links import CHAT_COMPANION_PT_links
 from .panels.panel_tokens import CHAT_COMPANION_PT_tokens
 from .properties.item_history import CHAT_COMPANION_UL_item_history
 from .properties.item_history import HistoryPropertyGroup
@@ -26,7 +25,16 @@ from .properties.item_usage import UsagePropertyGroup
 from .menus.menu_add_attachment import CHAT_COMPANION_MT_add_attachment
 from .properties.item_attachment import CHAT_COMPANION_UL_item_attachment
 from .properties.item_attachment import AttachmentPropertyGroup
+from .properties.item_image_attachment import CHAT_COMPANION_UL_item_image_attachment
+from .properties.item_image_attachment import ImageAttachmentPropertyGroup
 from .operators.operator_ask import CHAT_COMPANION_OT_ask
+from .operators.operator_image_attachments import (
+    CHAT_COMPANION_OT_add_blender_image,
+    CHAT_COMPANION_OT_add_image_file,
+    CHAT_COMPANION_OT_clear_image_attachments,
+    CHAT_COMPANION_OT_paste_image_attachment,
+    CHAT_COMPANION_OT_remove_image_attachment,
+)
 from .operators.operator_enter import CHAT_COMPANION_OT_process_prompt_input
 from .operators.operator_copy import CHAT_COMPANION_OT_copy
 from .operators.operator_copy_error import CHAT_COMPANION_OT_copy_error
@@ -100,9 +108,15 @@ classes = (
     CHAT_COMPANION_MT_add_attachment,
     CHAT_COMPANION_UL_item_attachment,
     AttachmentPropertyGroup,
-    CHAT_COMPANION_PT_links,
+    CHAT_COMPANION_UL_item_image_attachment,
+    ImageAttachmentPropertyGroup,
     CHAT_COMPANION_PT_tokens,
     CHAT_COMPANION_OT_ask,
+    CHAT_COMPANION_OT_add_blender_image,
+    CHAT_COMPANION_OT_add_image_file,
+    CHAT_COMPANION_OT_clear_image_attachments,
+    CHAT_COMPANION_OT_paste_image_attachment,
+    CHAT_COMPANION_OT_remove_image_attachment,
     CHAT_COMPANION_OT_process_prompt_input,
     CHAT_COMPANION_OT_copy,
     CHAT_COMPANION_OT_copy_error,
@@ -128,6 +142,8 @@ classes = (
     WM_MT_button_context,
     TEXT_PT_MT_chat_companion_custom_context,
 )
+
+addon_keymaps = []
 
 # ! variant enable/disable
 if cc_globals.cc_full:
@@ -204,6 +220,21 @@ def register():
     bpy.types.Scene.chat_companion_attachments = bpy.props.CollectionProperty(
         type=AttachmentPropertyGroup
     )
+    bpy.types.Scene.chat_companion_image_attachments = bpy.props.CollectionProperty(
+        type=ImageAttachmentPropertyGroup
+    )
+
+    wm = bpy.context.window_manager
+    kc = wm.keyconfigs.addon
+    if kc:
+        km = kc.keymaps.new(name="3D View", space_type="VIEW_3D")
+        kmi = km.keymap_items.new(
+            CHAT_COMPANION_OT_paste_image_attachment.bl_idname,
+            type="V",
+            value="PRESS",
+            ctrl=True,
+        )
+        addon_keymaps.append((km, kmi))
 
     bpy.types.WM_MT_button_context.append(chat_companion_button_menu)
     bpy.types.TEXT_MT_context_menu.prepend(chat_companion_text_context)
@@ -238,6 +269,11 @@ def unregister():
     del bpy.types.Scene.chat_companion_history
     del bpy.types.Scene.chat_companion_usage
     del bpy.types.Scene.chat_companion_attachments
+    del bpy.types.Scene.chat_companion_image_attachments
+
+    for km, kmi in addon_keymaps:
+        km.keymap_items.remove(kmi)
+    addon_keymaps.clear()
 
     for pcoll in cc_globals.preview_collections.values():
         bpy.utils.previews.remove(pcoll)

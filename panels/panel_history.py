@@ -16,6 +16,7 @@ from .panel import POLYGONINGENIEUR_panel
 from ..operators.operator_history import CHAT_COMPANION_OT_favorite_history_item
 from ..operators.operator_history import CHAT_COMPANION_OT_delete_history_item
 from ..operators.operator_history import CHAT_COMPANION_OT_clear_history
+from .. import __package__ as base_package
 
 
 class CHAT_COMPANION_PT_history(POLYGONINGENIEUR_panel, Panel):
@@ -48,6 +49,7 @@ class CHAT_COMPANION_PT_history(POLYGONINGENIEUR_panel, Panel):
 
     def draw(self, context):
         chat_properties = context.scene.chat_companion_properties
+        prefs = context.preferences.addons[base_package].preferences
         history = context.scene.chat_companion_history
 
         layout = self.layout
@@ -119,6 +121,9 @@ class CHAT_COMPANION_PT_history(POLYGONINGENIEUR_panel, Panel):
         clear_button = delete_container.operator(
             operator=CHAT_COMPANION_OT_clear_history.bl_idname, text="All", icon="TRASH"
         )
+
+        context_row = left.row(align=True)
+        context_row.prop(prefs, "max_history_context", text="Max Context")
 
         # todo add slider to adjust maximum history items
         # todo or even better estimate token and display along with max token of language model

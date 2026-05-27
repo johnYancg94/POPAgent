@@ -223,12 +223,33 @@ class ChatCompanionPreferences(AddonPreferences):
         default=10,
     )
 
-    developer_mode: props.BoolProperty(
-        name="Developer Mode",
-        description="Unlock the dev.run_python skill, which lets the agent execute arbitrary Python code. Enable only when testing in a safe environment.",
-        default=False,
-        update=PropertyUpdates.update_developer_mode,
+    max_history_context: props.IntProperty(
+        name="Max History Context",
+        description="Maximum enabled history turns sent as context for each prompt. Set to 0 to start each prompt without history context.",
+        min=0,
+        max=50,
+        default=5,
     )
+
+    blender_api_docs_url: props.StringProperty(
+        name="Blender API Docs URL",
+        description="Official Blender Python API documentation root used by blender.api_search.",
+        default="https://docs.blender.org/api/5.1/",
+    )
+
+    blender_api_docs_path: props.StringProperty(
+        name="Local Blender API Docs",
+        description="Optional local Blender Python API HTML documentation folder used as fallback or preferred source.",
+        subtype="DIR_PATH",
+        default="",
+    )
+
+    blender_api_docs_prefer_local: props.BoolProperty(
+        name="Prefer Local API Docs",
+        description="Search the configured local Blender API docs before official online docs.",
+        default=False,
+    )
+
     # endregion
 
     # region connection
@@ -377,13 +398,20 @@ class ChatCompanionPreferences(AddonPreferences):
         agent_iter_right: UILayout = agent_iter_split.column(align=True)
         agent_iter_right.enabled = self.agent_mode_enabled
         agent_iter_right.prop(self, "agent_max_iters", text="")
-        agent_dev_split: UILayout = agent_settings.split(align=True, factor=2 / 5)
-        agent_dev_left: UILayout = agent_dev_split.row(align=True)
-        agent_dev_left.alignment = "RIGHT"
-        agent_dev_left.label(text="Developer Mode")
-        agent_dev_right: UILayout = agent_dev_split.column(align=True)
-        agent_dev_right.alert = self.developer_mode
-        agent_dev_right.prop(self, "developer_mode", text="Unlock dev.run_python")
+        agent_history_split: UILayout = agent_settings.split(align=True, factor=2 / 5)
+        agent_history_left: UILayout = agent_history_split.row(align=True)
+        agent_history_left.alignment = "RIGHT"
+        agent_history_left.label(text="Max History Context")
+        agent_history_right: UILayout = agent_history_split.column(align=True)
+        agent_history_right.prop(self, "max_history_context", text="")
+        api_docs_split: UILayout = agent_settings.split(align=True, factor=2 / 5)
+        api_docs_left: UILayout = api_docs_split.row(align=True)
+        api_docs_left.alignment = "RIGHT"
+        api_docs_left.label(text="Blender API Docs")
+        api_docs_right: UILayout = api_docs_split.column(align=True)
+        api_docs_right.prop(self, "blender_api_docs_url", text="URL")
+        api_docs_right.prop(self, "blender_api_docs_path", text="Local")
+        api_docs_right.prop(self, "blender_api_docs_prefer_local", text="Prefer Local")
 
         layout.box()
 

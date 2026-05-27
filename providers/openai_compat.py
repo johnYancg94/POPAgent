@@ -140,6 +140,12 @@ class OpenAICompatProvider(BaseProvider):
     def supports_streaming_with_tools(self) -> bool:
         return True
 
+    def supports_image_input(self, prefs) -> bool:
+        return not self._image_input_disabled(prefs)
+
+    def _image_input_disabled(self, prefs) -> bool:
+        return self._org == "deepseek"
+
     def create_stream_parser(self) -> "OpenAIStreamParser":
         return OpenAIStreamParser(getattr(self, "_tool_wire_to_skill_name", {}).copy())
 

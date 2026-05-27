@@ -196,15 +196,3 @@ class PropertyUpdates:
         print(
             f"Setting LLM details: org={org} url={props.api_url}"
         )
-
-    def update_developer_mode(self, context: Context):
-        """Re-register or unregister dev.run_python when developer_mode toggles."""
-        try:
-            from ..builtin_skills.dev_skills import RUN_PYTHON
-            from ..agent_core import skill_registry
-            if self.developer_mode:
-                skill_registry.register_skill(RUN_PYTHON)
-            else:
-                skill_registry.unregister_namespace("builtin.dev")
-        except Exception as exc:
-            print(f"[POPAgent] developer_mode update error: {exc}")

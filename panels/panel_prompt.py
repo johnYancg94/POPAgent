@@ -22,8 +22,16 @@ from ..operators.operator_website import CHAT_COMPANION_OT_website
 from ..operators.operator_change_llm import CHAT_COMPANION_OT_select_open_ai
 from ..operators.operator_select_anthropic import CHAT_COMPANION_OT_select_anthropic
 from ..operators.operator_full_version import CHAT_COMPANION_OT_full_version
+from ..operators.operator_image_attachments import (
+    CHAT_COMPANION_OT_add_blender_image,
+    CHAT_COMPANION_OT_add_image_file,
+    CHAT_COMPANION_OT_clear_image_attachments,
+    CHAT_COMPANION_OT_paste_image_attachment,
+    CHAT_COMPANION_OT_remove_image_attachment,
+)
 from ..properties.properties import ChatCompanionProperties
 from ..properties.addon_preferences import ChatCompanionPreferences
+from ..providers import OpenAICompatProvider, AnthropicProvider
 from .. import __package__ as base_package
 
 
@@ -170,6 +178,10 @@ class CHAT_COMPANION_PT_prompt(POLYGONINGENIEUR_panel, Panel):
         layout.separator()
 
         # ! prompt
+        multimodal_row = layout.row(align=True)
+        multimodal_row.enabled = not props.waiting_for_answer
+        multimodal_row.prop(props, "multimodal_enabled", text="Multimodal Images", toggle=True)
+
         prompt: UILayout = layout.row(align=True)
         prompt_text = prompt.column(align=True)
         prompt_text.scale_y = 1.4
@@ -189,6 +201,9 @@ class CHAT_COMPANION_PT_prompt(POLYGONINGENIEUR_panel, Panel):
             prefs.use_streaming and dependencies.dependencies_installed
         )
 
+        if props.multimodal_enabled:
+            self._draw_image_inputs(context, layout, props, prefs)
+
         # show prompt below text field when it is multiline only
         wrapped_prompt = wrap_string_to_panel(context=context, string=props.user_prompt)
         if len(wrapped_prompt) > 1:
@@ -197,3 +212,80 @@ class CHAT_COMPANION_PT_prompt(POLYGONINGENIEUR_panel, Panel):
                 line_col = promt_full.column()
                 line_col.label(text=line)
                 line_col.scale_y = 0.8
+
+    def _draw_image_inputs(self, context, layout, props, prefs):
+        provider = _provider_for_prefs(prefs)
+        image_supported = bool(provider and provider.supports_image_input(prefs))
+        images = context.scene.chat_companion_image_attachments
+
+        box = layout.box()
+        box.enabled = not props.waiting_for_answer
+
+        header = box.row(align=True)
+        header.label(text="Images", icon="IMAGE_DATA")
+        header.operator(
+            operator=CHAT_COMPANION_OT_paste_image_attachment.bl_idname,
+            text="",
+            icon="PASTEDOWN",
+        )
+        header.operator(
+            operator=CHAT_COMPANION_OT_add_image_file.bl_idname,
+            text="",
+            icon="ADD",
+        )
+        header.operator(
+            operator=CHAT_COMPANION_OT_clear_image_attachments.bl_idname,
+            text="",
+            icon="TRASH",
+        )
+
+        if not image_supported:
+            warning = box.row(align=True)
+            warning.alert = True
+            warning.label(text="Current model has image input disabled")
+
+        blender_row = box.row(align=True)
+        blender_row.prop_search(
+            props,
+            "selected_blender_image",
+            context.blend_data,
+            "images",
+            text="",
+            icon="IMAGE_DATA",
+        )
+        blender_row.operator(
+            operator=CHAT_COMPANION_OT_add_blender_image.bl_idname,
+            text="",
+            icon="ADD",
+        )
+
+        if len(images) > 0:
+            list_row = box.row(align=True)
+            list_row.template_list(
+                "CHAT_COMPANION_UL_item_image_attachment",
+                "",
+                context.scene,
+                "chat_companion_image_attachments",
+                props,
+                "selected_image_attachment_item",
+                rows=min(3, len(images)),
+            )
+            list_tools = list_row.column(align=True)
+            list_tools.operator(
+                operator=CHAT_COMPANION_OT_remove_image_attachment.bl_idname,
+                text="",
+                icon="REMOVE",
+            )
+        else:
+            empty = box.row(align=True)
+            empty.label(text="Paste, choose, or add an image")
+
+
+def _provider_for_prefs(prefs):
+    if prefs.llm_organization == "openai":
+        return OpenAICompatProvider("openai")
+    if prefs.llm_organization == "deepseek":
+        return OpenAICompatProvider("deepseek")
+    if prefs.llm_organization == "anthropic":
+        return AnthropicProvider()
+    return None

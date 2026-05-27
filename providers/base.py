@@ -98,6 +98,10 @@ class BaseProvider(ABC):
         """Whether build_request(stream=True) plus create_stream_parser is wired."""
         return False
 
+    def supports_image_input(self, prefs) -> bool:
+        """Whether this configured model can receive image content blocks."""
+        return False
+
     def apply_to_props(self, prefs, props) -> None:
         """Write provider config into ChatCompanionProperties."""
         import json

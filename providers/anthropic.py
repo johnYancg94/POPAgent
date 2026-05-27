@@ -102,6 +102,10 @@ class AnthropicProvider(BaseProvider):
     def supports_streaming_with_tools(self) -> bool:
         return True
 
+    def supports_image_input(self, prefs) -> bool:
+        model = str(getattr(prefs, "anthropic_model", "")).lower()
+        return model.startswith("claude-")
+
     def create_stream_parser(self) -> "AnthropicStreamParser":
         return AnthropicStreamParser(getattr(self, "_tool_wire_to_skill_name", {}).copy())
 
