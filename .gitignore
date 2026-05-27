@@ -1,0 +1,15 @@
+__pycache__/
+*.py[cod]
+*.pyo
+
+.pytest_cache/
+.coverage
+htmlcov/
+
+.DS_Store
+Thumbs.db
+
+*.zip
+*.tar.gz
+dist/
+build/
