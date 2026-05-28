@@ -6,8 +6,34 @@ import asyncio
 from dataclasses import dataclass
 from typing import Awaitable, Callable, TypeVar
 
+import httpx
 
 T = TypeVar("T")
+
+# ---------------------------------------------------------------------------
+# Timeout constants — modelled on Anthropic SDK (connect=5s, total=600s)
+# ---------------------------------------------------------------------------
+DEFAULT_CONNECT_TIMEOUT = 5.0       # detect real network failures fast
+DEFAULT_REQUEST_TIMEOUT = 600.0     # 10 min — covers longest reasoning runs
+
+
+def build_httpx_timeout(read_timeout: float | None = None) -> httpx.Timeout:
+    """Return a structured httpx.Timeout with industry-standard defaults.
+
+    * ``connect`` — 5 s (fast-fail on network problems).
+    * ``read``    — *read_timeout* or ``DEFAULT_REQUEST_TIMEOUT`` (600 s).
+    * ``write``   — 10 s.
+    * ``pool``    — 5 s.
+
+    Pass ``read_timeout=None`` to disable the read timeout entirely
+    (the model may think for an unbounded duration).
+    """
+    return httpx.Timeout(
+        connect=DEFAULT_CONNECT_TIMEOUT,
+        read=read_timeout if read_timeout is not None else DEFAULT_REQUEST_TIMEOUT,
+        write=10.0,
+        pool=5.0,
+    )
 
 
 class ModelServerTimeoutError(TimeoutError):

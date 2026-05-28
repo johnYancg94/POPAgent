@@ -11,6 +11,7 @@ def test_operator_ask_wraps_provider_waits_with_model_timeout():
 
     assert "ModelServerTimeoutError" in text
     assert "run_with_model_timeout" in text
+    assert "build_httpx_timeout" in text
     assert "_set_model_thinking" in text
     assert "Model is thinking" in text
     assert "Model Server Busy" in text

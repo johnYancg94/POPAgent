@@ -47,6 +47,7 @@ from ..agent_core.vision_inputs import collect_enabled_image_payloads
 from ..agent_core.retry import (
     ModelServerTimeoutError,
     RetryPolicy,
+    build_httpx_timeout,
     run_with_model_timeout,
     run_with_retries,
 )
@@ -655,6 +656,22 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
             "Python when API names, operator parameters, context requirements, "
             "or version behavior are uncertain, call `blender.api_search` and "
             "base the code on the returned official documentation results."
+            "\n\nBlender node expert rule: for material-node tasks, inspect or "
+            "validate first with `blender.material.inspect_nodes` or "
+            "`blender.material.validate_nodes`; when the user explicitly wants "
+            "PBR texture hookup, prefer `blender.material.connect_pbr_textures` "
+            "over arbitrary Python. For Geometry Nodes tasks, inspect or validate "
+            "first with `blender.geometry_nodes.inspect` or "
+            "`blender.geometry_nodes.validate`; for a basic Geometry Nodes modifier "
+            "or pass-through node group, prefer "
+            "`blender.geometry_nodes.ensure_basic_group`. When exact Blender 5.1 "
+            "ShaderNode or GeometryNode type identifiers are uncertain, call "
+            "`blender.nodes.search_types` before choosing node IDs. For controlled "
+            "node graph edits, prefer `blender.material.add_node`, "
+            "`blender.material.connect_nodes`, `blender.material.set_node_input`, "
+            "`blender.geometry_nodes.add_node`, `blender.geometry_nodes.connect_nodes`, "
+            "and `blender.geometry_nodes.set_node_input`. Use `dev.run_python` only "
+            "when the dedicated node skills cannot express the requested operation."
             "\n\nAgent planning/reflection rule: for multi-step tasks, keep a "
             "short internal plan before acting. After each tool result, check "
             "whether the result satisfies the user's goal before calling another "
@@ -708,7 +725,17 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
             )
 
         mb = MessageBuilder.from_history(history, max_items=max_history_context)
-        mb.append_user(self.user_prompt, images=user_images)
+        # Collect enabled text attachments and append to user prompt
+        text_attachments = context.scene.chat_companion_attachments
+        attachments_string = ""
+        for attachment in text_attachments:
+            if attachment.is_enabled:
+                try:
+                    attachments_string += "\n" + json.loads(attachment.text) + "\n"
+                except (json.JSONDecodeError, TypeError):
+                    attachments_string += "\n" + attachment.text + "\n"
+        prompt_with_attachments = self.user_prompt + attachments_string
+        mb.append_user(prompt_with_attachments, images=user_images)
 
         props.is_connecting = False
 
@@ -854,6 +881,7 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         Returns None on error (caller should bail out)."""
         props.is_streaming = True
         self._set_model_thinking(context, props)
+
         async def operation():
             parser = provider.create_stream_parser()
             running_text = ""
@@ -861,7 +889,7 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
             props.answer_parts = json.dumps([])
             async with client.stream(
                 "POST", url=url, headers=headers, json=body,
-                timeout=prefs.timeout,
+                timeout=build_httpx_timeout(prefs.timeout),
             ) as response:
                 response.raise_for_status()
                 cc_globals.request_failed = False
@@ -900,13 +928,10 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                 pass
 
         try:
-            return await run_with_model_timeout(
-                run_with_retries(
-                    operation,
-                    policy=RetryPolicy(max_attempts=3),
-                    on_retry=on_retry,
-                ),
-                timeout=prefs.timeout,
+            return await run_with_retries(
+                operation,
+                policy=RetryPolicy(max_attempts=3),
+                on_retry=on_retry,
             )
         except ModelServerTimeoutError:
             raise
@@ -926,7 +951,7 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                 url=url,
                 headers=headers,
                 json=body,
-                timeout=timeout,
+                timeout=build_httpx_timeout(timeout),
             )
             response.raise_for_status()
             return response
@@ -943,13 +968,10 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
             except Exception:
                 pass
 
-        return await run_with_model_timeout(
-            run_with_retries(
-                operation,
-                policy=RetryPolicy(max_attempts=3),
-                on_retry=on_retry,
-            ),
-            timeout=timeout,
+        return await run_with_retries(
+            operation,
+            policy=RetryPolicy(max_attempts=3),
+            on_retry=on_retry,
         )
 
     async def _stream_with_retries(self, context, client, *, url, headers, body, timeout):
@@ -964,7 +986,7 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                 url=url,
                 headers=headers,
                 json=body,
-                timeout=timeout,
+                timeout=build_httpx_timeout(timeout),
             ) as response:
                 response.raise_for_status()
                 raw_usage = await self.handle_stream_chunk(context, response)
@@ -982,13 +1004,10 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
             except Exception:
                 pass
 
-        return await run_with_model_timeout(
-            run_with_retries(
-                operation,
-                policy=RetryPolicy(max_attempts=3),
-                on_retry=on_retry,
-            ),
-            timeout=timeout,
+        return await run_with_retries(
+            operation,
+            policy=RetryPolicy(max_attempts=3),
+            on_retry=on_retry,
         )
 
     def _set_model_thinking(self, context, props) -> None:

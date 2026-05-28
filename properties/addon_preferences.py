@@ -308,14 +308,14 @@ class ChatCompanionPreferences(AddonPreferences):
 
     timeout: props.FloatProperty(
         name="Timeout for API requests.",
-        description="How many seconds does the addon try to get an answer from the LLM servers. You can adjust this if the servers are under heavy load",
+        description="Maximum seconds to wait for a complete LLM response (read timeout). Connection timeout is fixed at 5 s. Increase for slow reasoning models (e.g. 300–600 s)",
         subtype="TIME",
         unit="TIME_ABSOLUTE",
         soft_min=0.001,
         soft_max=10000,
         step=1,
         precision=3,
-        default=30,
+        default=300,
     )
     # endregion
 
