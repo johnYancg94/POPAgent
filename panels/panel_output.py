@@ -28,6 +28,7 @@ from ..utils.utils import can_send_prompt
 from .panel import POLYGONINGENIEUR_panel
 from ..properties.properties import ChatCompanionProperties
 from ..properties.addon_preferences import ChatCompanionPreferences
+from ..agent_core.execution_trace import parse_trace
 from .. import __package__ as base_package
 
 
@@ -67,7 +68,7 @@ class CHAT_COMPANION_PT_output(POLYGONINGENIEUR_panel, Panel):
         layout.use_property_split = True
         layout.use_property_decorate = False
         # waiting for answer
-        if props.is_connecting:
+        if props.is_connecting or (props.waiting_for_answer and props.waiting_string):
             layout.label(text=props.waiting_string, icon=props.waiting_icon)
         if cc_globals.request_failed:
             self.draw_error_message(context, layout)
@@ -104,6 +105,8 @@ class CHAT_COMPANION_PT_output(POLYGONINGENIEUR_panel, Panel):
 
         if display_mode == "RAW":
             self.draw_raw_answer(context, layout, chat_properties.answer)
+            if addon_preferences.developer_mode:
+                self.draw_selected_execution_trace(context, layout, chat_properties)
             return
 
         expanded_code_indices = self.parse_expanded_indices(
@@ -440,26 +443,8 @@ class CHAT_COMPANION_PT_output(POLYGONINGENIEUR_panel, Panel):
 
                 layout.separator(factor=0.2)
 
-        # ! agent tool call timeline
-        history = context.scene.chat_companion_history
-        chat_properties = context.scene.chat_companion_properties
-        if len(history) > 0:
-            selected_item = history.get(str(chat_properties.selected_history_item))
-            if selected_item and selected_item.tool_calls_json:
-                try:
-                    tool_calls = json.loads(selected_item.tool_calls_json)
-                except (json.JSONDecodeError, AttributeError):
-                    tool_calls = []
-                if tool_calls:
-                    layout.separator(factor=0.5)
-                    timeline_box = layout.box()
-                    header_row = timeline_box.row(align=True)
-                    header_row.label(text=f"工具调用 ({len(tool_calls)})", icon="TOOL_SETTINGS")
-                    for i, tc in enumerate(tool_calls):
-                        tc_row = timeline_box.row(align=True)
-                        ok = tc.get("result", {}).get("ok", True)
-                        icon = "CHECKMARK" if ok else "ERROR"
-                        tc_row.label(text=f"{i+1}. {tc.get('name', '?')}", icon=icon)
+        if addon_preferences.developer_mode:
+            self.draw_selected_execution_trace(context, layout, chat_properties)
 
         # ! copy complete answer
         has_content: bool = bool(chat_properties.answer)
@@ -504,6 +489,81 @@ class CHAT_COMPANION_PT_output(POLYGONINGENIEUR_panel, Panel):
         mode_row.prop(addon_preferences, "answer_display_mode", text="")
         layout.separator(factor=0.2)
 
+    def draw_execution_trace(self, layout: UILayout, trace: dict, raw_json: str):
+        layout.separator(factor=0.5)
+        trace_box = layout.box()
+        summary = trace.get("summary", {})
+        tool_count = summary.get("tool_count", 0)
+        error_count = summary.get("error_count", 0)
+
+        header_row = trace_box.row(align=True)
+        header_row.label(
+            text=f"Execution Trace ({tool_count} tools, {error_count} errors)",
+            icon="TOOL_SETTINGS",
+        )
+        copy_trace = header_row.operator(
+            operator=CHAT_COMPANION_OT_copy.bl_idname,
+            text="",
+            icon="DUPLICATE",
+        )
+        copy_trace.content_type = "RAW"
+        copy_trace.content = raw_json
+
+        if trace.get("version") == 1:
+            for i, tc in enumerate(trace.get("legacy_tool_calls", [])):
+                tc_row = trace_box.row(align=True)
+                result = tc.get("result", {}) if isinstance(tc, dict) else {}
+                ok = result.get("ok", True) if isinstance(result, dict) else True
+                icon = "CHECKMARK" if ok else "ERROR"
+                tc_row.label(text=f"{i + 1}. {tc.get('name', '?')}", icon=icon)
+            return
+
+        if summary.get("aborted"):
+            abort_row = trace_box.row(align=True)
+            abort_row.alert = True
+            abort_row.label(
+                text=f"Aborted: {summary.get('abort_reason', '')}",
+                icon="ERROR",
+            )
+
+        for iteration in trace.get("iterations", []):
+            iter_row = trace_box.row(align=True)
+            iter_row.label(
+                text=(
+                    f"Iter {iteration.get('index', 0)} "
+                    f"{iteration.get('latency_ms', 0)}ms "
+                    f"status {iteration.get('status_code', 0)} "
+                    f"{iteration.get('finish_reason', '')}"
+                ),
+                icon="TIME",
+            )
+            for tc in iteration.get("tool_calls", []):
+                tc_row = trace_box.row(align=True)
+                tc_row.alert = not tc.get("ok", True)
+                icon = "CHECKMARK" if tc.get("ok", True) else "ERROR"
+                error_kind = tc.get("error_kind", "")
+                suffix = f" [{error_kind}]" if error_kind else ""
+                tc_row.label(
+                    text=f"{tc.get('name', '?')} {tc.get('duration_ms', 0)}ms{suffix}",
+                    icon=icon,
+                )
+
+    def draw_selected_execution_trace(
+        self,
+        context: Context,
+        layout: UILayout,
+        chat_properties: ChatCompanionProperties,
+    ):
+        history = context.scene.chat_companion_history
+        if len(history) <= 0:
+            return
+        selected_item = history.get(str(chat_properties.selected_history_item))
+        if not selected_item or not selected_item.tool_calls_json:
+            return
+        trace = parse_trace(selected_item.tool_calls_json)
+        if trace["summary"].get("tool_count", 0) > 0 or trace["summary"].get("aborted"):
+            self.draw_execution_trace(layout, trace, selected_item.tool_calls_json)
+
     def draw_raw_answer(self, context: Context, layout: UILayout, answer: str):
         raw_box = layout.box()
         raw_box.scale_y = 0.58
@@ -544,6 +604,12 @@ class CHAT_COMPANION_PT_output(POLYGONINGENIEUR_panel, Panel):
 
     def draw_error_message(self, context: Context, layout: UILayout):
         chat_properties: ChatCompanionProperties = context.scene.chat_companion_properties
+        try:
+            addon_preferences = context.preferences.addons[
+                base_package
+            ].preferences
+        except Exception:
+            addon_preferences = None
 
         # error title
         error_title_container = layout.column(align=True)
@@ -564,7 +630,17 @@ class CHAT_COMPANION_PT_output(POLYGONINGENIEUR_panel, Panel):
         for line in wrapped_error_info:
             error_info_text.label(text=line)
 
-        # error message
+        if not bool(getattr(addon_preferences, "developer_mode", False)):
+            return
+
+        self.draw_error_details(context, layout, chat_properties)
+
+    def draw_error_details(
+        self,
+        context: Context,
+        layout: UILayout,
+        chat_properties: ChatCompanionProperties,
+    ):
         error_message_container = layout.column(align=True)
         header = error_message_container.column_flow(columns=2, align=True)
         header.scale_y = 1.1

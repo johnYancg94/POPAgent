@@ -59,6 +59,8 @@ from .operators.operator_select_anthropic import CHAT_COMPANION_OT_select_anthro
 from .operators.operator_skills import (
     POPAGENT_OT_toggle_skill,
     POPAGENT_OT_clear_session_trust,
+    POPAGENT_OT_set_skill_permission,
+    POPAGENT_OT_reset_skill_permissions,
 )
 from .menus.context_interface_help import WM_MT_button_context
 from .menus.context_interface_help import chat_companion_button_menu
@@ -88,7 +90,7 @@ bl_info = {
     "author": "JhonYan",
     "description": "A Blender Agent based on OpenAI and DeepSeek.",
     "blender": (5, 1, 0),
-    "version": (1, 1, 0),
+    "version": (1, 2, 0),
     "location": "View3D",
     "warning": "",
     "doc_url": "",
@@ -143,6 +145,8 @@ classes = (
     POPAGENT_OT_confirm_skill,
     POPAGENT_OT_toggle_skill,
     POPAGENT_OT_clear_session_trust,
+    POPAGENT_OT_set_skill_permission,
+    POPAGENT_OT_reset_skill_permissions,
     WM_MT_button_context,
     TEXT_PT_MT_chat_companion_custom_context,
 )

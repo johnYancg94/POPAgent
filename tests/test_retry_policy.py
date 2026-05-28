@@ -16,7 +16,9 @@ spec.loader.exec_module(retry)
 
 
 RetryPolicy = retry.RetryPolicy
+ModelServerTimeoutError = retry.ModelServerTimeoutError
 run_with_retries = retry.run_with_retries
+run_with_model_timeout = retry.run_with_model_timeout
 is_recoverable_error = retry.is_recoverable_error
 
 
@@ -84,10 +86,36 @@ def test_timeout_like_errors_are_recoverable_by_name():
     assert is_recoverable_error(_TimeoutError())
 
 
+def test_model_timeout_raises_specific_error():
+    async def operation():
+        import asyncio
+
+        await asyncio.sleep(0.05)
+        return "late"
+
+    async def scenario():
+        try:
+            await run_with_model_timeout(operation(), timeout=0.001)
+        except ModelServerTimeoutError as exc:
+            return str(exc)
+
+    import asyncio
+
+    assert "timed out" in asyncio.run(scenario())
+
+
+def test_cancelled_error_is_not_recoverable():
+    import asyncio
+
+    assert not is_recoverable_error(asyncio.CancelledError())
+
+
 def run():
     test_retries_recoverable_errors_until_success()
     test_does_not_retry_unrecoverable_http_status()
     test_timeout_like_errors_are_recoverable_by_name()
+    test_model_timeout_raises_specific_error()
+    test_cancelled_error_is_not_recoverable()
     print("test_retry_policy OK")
     return True
 

@@ -5,11 +5,26 @@ Skill list panel operators: toggle disabled state and clear session trust.
 # pyright: reportInvalidTypeForm=false
 
 import bpy
+import json
 from bpy.props import StringProperty
 from bpy.types import Operator
 
 from ..agent_core import skill_registry
 from ..agent_core.confirm_dialog import clear_session_trust
+from .. import __package__ as base_package
+
+
+def _prefs_from_context(context):
+    return context.preferences.addons[base_package].preferences
+
+
+def _read_override_json(prefs) -> dict:
+    raw = getattr(prefs, "skill_permission_overrides_json", "") or "{}"
+    try:
+        data = json.loads(raw)
+    except (TypeError, ValueError):
+        return {}
+    return data if isinstance(data, dict) else {}
 
 
 class POPAGENT_OT_toggle_skill(Operator):
@@ -40,4 +55,48 @@ class POPAGENT_OT_clear_session_trust(Operator):
     def execute(self, context):
         clear_session_trust()
         self.report({"INFO"}, "Session trust cleared.")
+        return {"FINISHED"}
+
+
+class POPAGENT_OT_set_skill_permission(Operator):
+    """Set a persistent per-skill confirmation override."""
+
+    bl_idname = "popagent.set_skill_permission"
+    bl_label = "Set Skill Permission"
+    bl_options = {"INTERNAL"}
+
+    owner: StringProperty(default="")
+    name: StringProperty(default="")
+    level: StringProperty(default="never")
+
+    def execute(self, context):
+        if not self.owner or not self.name:
+            return {"CANCELLED"}
+        if self.level not in {"never", "first", "always"}:
+            return {"CANCELLED"}
+
+        prefs = _prefs_from_context(context)
+        data = _read_override_json(prefs)
+        data[skill_registry.permission_key(self.owner, self.name)] = self.level
+        prefs.skill_permission_overrides_json = json.dumps(
+            data,
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+        skill_registry.set_permission_override(self.owner, self.name, self.level)
+        return {"FINISHED"}
+
+
+class POPAGENT_OT_reset_skill_permissions(Operator):
+    """Restore all skills to their preset metadata confirmation levels."""
+
+    bl_idname = "popagent.reset_skill_permissions"
+    bl_label = "Restore Preset Skill Permissions"
+    bl_options = {"INTERNAL"}
+
+    def execute(self, context):
+        prefs = _prefs_from_context(context)
+        prefs.skill_permission_overrides_json = "{}"
+        skill_registry.clear_permission_overrides()
+        self.report({"INFO"}, "Skill permissions restored to presets.")
         return {"FINISHED"}

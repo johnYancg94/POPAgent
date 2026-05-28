@@ -234,6 +234,18 @@ class ChatCompanionPreferences(AddonPreferences):
         max=80,
         default=12,
     )
+
+    developer_mode: props.BoolProperty(
+        name="Developer Mode",
+        description="Show execution traces, detailed usage records, and advanced skill permission controls.",
+        default=False,
+    )
+
+    skill_permission_overrides_json: props.StringProperty(
+        name="Skill Permission Overrides",
+        description="Persistent JSON overrides for per-skill confirmation behavior.",
+        default="{}",
+    )
     # endregion
 
     # region agent mode
@@ -469,13 +481,14 @@ class ChatCompanionPreferences(AddonPreferences):
         # ! skills
         skills_settings = layout.column(align=True)
         skills_settings.label(text="Skills", icon="TOOL_SETTINGS")
-        draw_skills_ui(skills_settings)
+        draw_skills_ui(skills_settings, prefs=self, developer_mode=self.developer_mode)
 
         layout.box()
 
         # ! system
         system_settings = layout.column(align=True)
         system_settings.label(text="System", icon="PLUGIN")
+        system_settings.prop(self, "developer_mode", text="Developer Mode")
 
         # ! dependencies
         streaming_layout = system_settings.split(factor=2 / 5, align=True)

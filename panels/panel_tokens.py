@@ -11,6 +11,7 @@ from ..operators.operator_usage import (
     CHAT_COMPANION_OT_export_usage_csv,
 )
 from ..utils.usage_stats import format_cost_rmb, format_tokens, summarize_usage
+from .. import __package__ as base_package
 
 
 class CHAT_COMPANION_PT_tokens(POLYGONINGENIEUR_panel, Panel):
@@ -36,6 +37,10 @@ class CHAT_COMPANION_PT_tokens(POLYGONINGENIEUR_panel, Panel):
             empty.label(text="Ask POPAgent and this panel will fill in.")
             return
 
+        if not self._developer_mode(context):
+            self._draw_compact_summary(layout, summary)
+            return
+
         self._draw_summary(layout, summary)
         layout.separator()
         self._draw_breakdown(layout, summary)
@@ -43,6 +48,20 @@ class CHAT_COMPANION_PT_tokens(POLYGONINGENIEUR_panel, Panel):
         self._draw_recent(layout, usage_records)
         layout.separator()
         self._draw_actions(layout)
+
+    def _developer_mode(self, context) -> bool:
+        try:
+            prefs = context.preferences.addons[base_package].preferences
+            return bool(getattr(prefs, "developer_mode", False))
+        except Exception:
+            return False
+
+    def _draw_compact_summary(self, layout: UILayout, summary: dict):
+        box = layout.box()
+        box.label(text="Scene Usage", icon="GRAPH")
+        grid = box.grid_flow(row_major=True, columns=2, even_columns=True, even_rows=True)
+        self._metric(grid, "Total tokens", format_tokens(summary["total_tokens"]), "SMALL_CAPS")
+        self._metric(grid, "RMB cost", format_cost_rmb(summary["estimated_cost_rmb"]), "TAG")
 
     def _draw_summary(self, layout: UILayout, summary: dict):
         requests = summary["requests"]

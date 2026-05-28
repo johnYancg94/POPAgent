@@ -24,7 +24,7 @@ _LEVEL_ICON = {
 }
 
 
-def _metadata_summary(meta: dict) -> str:
+def _metadata_summary(meta: dict, level: str) -> str:
     parts = []
     if meta.get("writes_files"):
         parts.append("writes files")
@@ -38,7 +38,6 @@ def _metadata_summary(meta: dict) -> str:
     elif meta.get("modifies_scene") or meta.get("writes_files"):
         parts.append("no undo")
 
-    level = meta.get("requires_confirmation", "never")
     if level == "always":
         parts.append("always confirm")
     elif level == "first":
@@ -49,13 +48,37 @@ def _metadata_summary(meta: dict) -> str:
     return " / ".join(parts)
 
 
-def draw_skills_ui(layout: UILayout):
+def _draw_permission_controls(layout: UILayout, owner: str, name: str, level: str):
+    row = layout.row(align=True)
+    for value, label in (
+        ("never", "Auto"),
+        ("first", "First Confirm"),
+        ("always", "Always Confirm"),
+    ):
+        op = row.operator(
+            "popagent.set_skill_permission",
+            text=label,
+            depress=level == value,
+        )
+        op.owner = owner
+        op.name = name
+        op.level = value
+
+
+def draw_skills_ui(layout: UILayout, prefs=None, developer_mode: bool = False):
     items = skill_registry.all_skills_including_disabled()
     if not items:
         layout.label(text="(no skills registered)", icon="INFO")
         return
 
     layout.label(text=f"{len(items)} skill(s) registered")
+    if developer_mode:
+        restore_row = layout.row(align=True)
+        restore_row.operator(
+            "popagent.reset_skill_permissions",
+            text="Restore Preset Permissions",
+            icon="LOOP_BACK",
+        )
 
     groups = _group_by_owner(items)
     for owner in sorted(groups.keys()):
@@ -65,7 +88,8 @@ def draw_skills_ui(layout: UILayout):
 
         for skill, disabled in groups[owner]:
             meta = skill.get("metadata", {})
-            level = meta.get("requires_confirmation", "never")
+            name = skill.get("name", "?")
+            level = skill_registry.get_permission_level(skill, prefs=prefs)
             icon = _LEVEL_ICON.get(level, "DOT")
 
             row = box.row(align=True)
@@ -76,16 +100,18 @@ def draw_skills_ui(layout: UILayout):
                 emboss=False,
             )
             toggle_op.owner = owner
-            toggle_op.name = skill.get("name", "?")
+            toggle_op.name = name
 
             label_col = row.column()
             label_col.enabled = not disabled
-            label_col.label(text=skill.get("name", "?"), icon=icon)
-            summary = _metadata_summary(meta)
+            label_col.label(text=name, icon=icon)
+            summary = _metadata_summary(meta, level)
             if summary:
                 sub = label_col.row()
                 sub.scale_y = 0.65
                 sub.label(text=summary)
+            if developer_mode:
+                _draw_permission_controls(label_col, owner, name, level)
 
     layout.separator()
 
@@ -113,4 +139,14 @@ class CHAT_COMPANION_PT_skills(POLYGONINGENIEUR_panel, Panel):
         self.layout.label(text="", icon="TOOL_SETTINGS")
 
     def draw(self, context):
-        draw_skills_ui(self.layout)
+        try:
+            from .. import __package__ as base_package
+
+            prefs = context.preferences.addons[base_package].preferences
+        except Exception:
+            prefs = None
+        draw_skills_ui(
+            self.layout,
+            prefs=prefs,
+            developer_mode=bool(getattr(prefs, "developer_mode", False)),
+        )

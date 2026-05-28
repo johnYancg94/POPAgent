@@ -35,7 +35,10 @@ class CHAT_COMPANION_OT_copy(Operator):
     def execute(self, context):
 
         # ! copy full answer (with lineseps for long text lines) to clipboard
-        if self.content_type == "FULL":
+        if self.content_type == "RAW":
+            bpy.context.window_manager.clipboard = self.content
+            report_message = "Content copied to clipboard"
+        elif self.content_type == "FULL":
             answer_parts = parse_llm_content(self.content)
             pretty_wrapped_parts = wrap_non_code_parts(answer_parts)
             pretty_wrapped_str = parts_to_pretty_string(pretty_wrapped_parts)

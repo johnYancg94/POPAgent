@@ -10,12 +10,17 @@ class CHAT_COMPANION_OT_cancel_request(bpy.types.Operator):
     bl_options = {"REGISTER", "INTERNAL"}
 
     def execute(self, context):
+        props = context.scene.chat_companion_properties
         task = cc_globals.active_async_tasks.get("chat_companion.ask")
         if task is None or task.done():
-            return {"CANCELLED"}
+            props.waiting_for_answer = False
+            props.is_connecting = False
+            props.is_streaming = False
+            props.waiting_string = "Cancelled"
+            props.waiting_icon = "CANCEL"
+            return {"FINISHED"}
 
         task.cancel()
-        props = context.scene.chat_companion_properties
         props.waiting_string = "Cancelling"
         props.waiting_icon = "CANCEL"
         return {"FINISHED"}

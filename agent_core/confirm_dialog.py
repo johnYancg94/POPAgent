@@ -21,6 +21,7 @@ import json
 from bpy.props import BoolProperty, StringProperty
 
 from .main_thread import run_on_main
+from . import skill_registry
 
 
 _session_trust: set[str] = set()
@@ -143,14 +144,24 @@ def _resolve(approved: bool, trust_session: bool) -> None:
 def _invoke_popup_main_thread(skill: dict, args: dict) -> None:
     """Invoked on main thread via run_on_main; opens the confirmation operator."""
     risk = "\n".join(_build_risk_lines(skill, args))
+    level = skill_registry.get_permission_level(skill, prefs=_current_preferences())
     bpy.ops.popagent.confirm_skill(
         "INVOKE_DEFAULT",
         skill_name=skill.get("name", "?"),
         skill_description=skill.get("description", "")[:240],
         args_summary=_format_args(args),
         risk_summary=risk,
-        confirmation_level=skill.get("metadata", {}).get("requires_confirmation", "first"),
+        confirmation_level=level,
     )
+
+
+def _current_preferences():
+    try:
+        from .. import __package__ as base_package
+
+        return bpy.context.preferences.addons[base_package].preferences
+    except Exception:
+        return None
 
 
 async def ask_confirmation(skill: dict, args: dict) -> dict:
@@ -161,8 +172,7 @@ async def ask_confirmation(skill: dict, args: dict) -> dict:
     """
     global _pending_future, _pending_payload
 
-    meta = skill.get("metadata", {})
-    level = meta.get("requires_confirmation", "never")
+    level = skill_registry.get_permission_level(skill, prefs=_current_preferences())
 
     if level == "never":
         return {"approved": True, "trust_session": False}

@@ -10,6 +10,10 @@ from typing import Awaitable, Callable, TypeVar
 T = TypeVar("T")
 
 
+class ModelServerTimeoutError(TimeoutError):
+    """Raised when the model server takes too long to produce a response."""
+
+
 @dataclass(frozen=True)
 class RetryPolicy:
     max_attempts: int = 3
@@ -19,6 +23,8 @@ class RetryPolicy:
 
 def is_recoverable_error(exc: BaseException) -> bool:
     """Return True for network, timeout, rate-limit, and 5xx-like failures."""
+    if isinstance(exc, asyncio.CancelledError):
+        return False
     response = getattr(exc, "response", None)
     status_code = getattr(response, "status_code", None)
     if status_code is not None:
@@ -62,3 +68,13 @@ async def run_with_retries(
                 await sleep(delay)
 
     raise RuntimeError("retry loop exited unexpectedly")
+
+
+async def run_with_model_timeout(awaitable: Awaitable[T], *, timeout: float) -> T:
+    """Apply a user-facing total wait timeout around a provider operation."""
+    try:
+        return await asyncio.wait_for(awaitable, timeout=max(0.001, float(timeout)))
+    except asyncio.TimeoutError as exc:
+        raise ModelServerTimeoutError(
+            f"Model server timed out after {timeout:.1f}s"
+        ) from exc

@@ -52,6 +52,11 @@ log.addHandler(log_handler)
 _loop_kicking_operator_running: bool = False
 
 
+def _operator_task_key(operator) -> str | None:
+    """Return the stable Blender operator idname for task registry lookups."""
+    return getattr(type(operator), "bl_idname", None)
+
+
 def setup_asyncio_executor() -> None:
     """Sets up AsyncIO to run properly on each platform."""
 
@@ -270,7 +275,7 @@ class AsyncModalOperatorMixin:
         return {"PASS_THROUGH"}
 
     def _finish(self, context: Context):
-        task_key = getattr(self, "bl_idname", None)
+        task_key = _operator_task_key(self)
         if task_key and cc_globals.active_async_tasks.get(task_key) is self.async_task:
             cc_globals.active_async_tasks.pop(task_key, None)
         self._stop_async_task()
@@ -289,7 +294,7 @@ class AsyncModalOperatorMixin:
         # Download the previews asynchronously.
         self.signalling_future = future or asyncio.Future()
         self.async_task = asyncio.ensure_future(async_task)
-        task_key = getattr(self, "bl_idname", None)
+        task_key = _operator_task_key(self)
         if task_key:
             cc_globals.active_async_tasks[task_key] = self.async_task
         self.log.debug("Created new task %r", self.async_task)

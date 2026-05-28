@@ -44,7 +44,19 @@ from ..agent_core import skill_registry, executor
 from ..agent_core.message_builder import MessageBuilder, ToolCall, history_context_items
 from ..agent_core.context_builder import build_scene_summary
 from ..agent_core.vision_inputs import collect_enabled_image_payloads
-from ..agent_core.retry import RetryPolicy, run_with_retries
+from ..agent_core.retry import (
+    ModelServerTimeoutError,
+    RetryPolicy,
+    run_with_model_timeout,
+    run_with_retries,
+)
+from ..agent_core.execution_trace import (
+    create_trace,
+    record_abort,
+    record_iteration,
+    record_tool_call,
+)
+from ..agent_core.agent_policy import choose_max_iters, normalized_tool_signature
 from ..providers import OpenAICompatProvider, AnthropicProvider
 
 
@@ -151,6 +163,9 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         props.error_info = ""
         props.error_message = ""
         cc_globals.request_failed = False
+        self._usage_recorded = False
+        self._active_trace = None
+        self._request_started_at = time.perf_counter()
 
         # if it is code completion, don't use streaming
         if self.is_code_completion:
@@ -294,7 +309,7 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                     )
 
                     cc_globals.request_failed = False
-                    add_usage_record(
+                    self._record_usage(
                         context,
                         prefs,
                         raw_usage,
@@ -324,7 +339,7 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                     props.waiting_for_answer = False
                     props.is_streaming = False
 
-                    return response
+                    return None
 
                 # ! for non streaming use async requests session
                 else:
@@ -339,6 +354,17 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                 error=e,
                 title="Timeout",
                 solution="Possible solution:\nTrying to get an answer took too long, maybe the server is under heavy load, your internet connection is not stable at the moment or you've set the timeout very short?",
+            )
+        except ModelServerTimeoutError as e:
+            self.show_general_error(
+                context=context,
+                error=e,
+                title="Model Server Busy",
+                solution=(
+                    "The model server did not produce a response before the "
+                    "configured timeout. The server may be busy or experiencing "
+                    "high latency. Please try again later or switch models."
+                ),
             )
         except httpx.TooManyRedirects as e:
             # Tell the user their URL was bad and try a different one
@@ -539,7 +565,7 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
             self.quit()
             return
 
-        add_usage_record(
+        self._record_usage(
             context,
             prefs,
             response.get("usage") or {},
@@ -629,6 +655,10 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
             "Python when API names, operator parameters, context requirements, "
             "or version behavior are uncertain, call `blender.api_search` and "
             "base the code on the returned official documentation results."
+            "\n\nAgent planning/reflection rule: for multi-step tasks, keep a "
+            "short internal plan before acting. After each tool result, check "
+            "whether the result satisfies the user's goal before calling another "
+            "tool."
         )
         try:
             scene_summary = await build_scene_summary()
@@ -639,12 +669,16 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         skills = skill_registry.all_skills()
         tools = provider.skills_to_tools(skills)
 
-        max_iters = getattr(prefs, "agent_max_iters", 10)
+        max_iters = choose_max_iters(
+            self.user_prompt,
+            tool_count=len(tools),
+            configured_max=getattr(prefs, "agent_max_iters", 10),
+        )
         max_history_context = getattr(prefs, "max_history_context", 5)
         # Anti-loop: track last 3 (skill, args_hash) pairs.
-        recent_calls: list[tuple[str, int]] = []
-        # Collect all tool calls made in this turn for history.
-        all_tool_calls: list[dict] = []
+        recent_calls: list[tuple[str, str]] = []
+        trace = create_trace()
+        self._active_trace = trace
 
         # Streaming with tools: enabled when both prefs.use_streaming AND the
         # provider declares support. Falls back to non-streaming otherwise.
@@ -712,6 +746,7 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                     context, client, provider, url, headers, body, prefs, props
                 )
                 if llm_resp is None:
+                    record_abort(trace, "stream_error")
                     return
             else:
                 response = await self._post_with_retries(
@@ -729,19 +764,31 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                 try:
                     resp_json = response.json()
                 except json.JSONDecodeError:
+                    record_abort(trace, "invalid_json")
                     self.show_general_error(context, solution="Could not parse LLM response as JSON.")
                     return
 
                 llm_resp = provider.parse_response(resp_json)
 
-            add_usage_record(
+            latency_ms = (time.perf_counter() - started_at) * 1000
+            self._record_usage(
                 context,
                 prefs,
                 llm_resp.usage,
                 mode="agent",
                 prompt=self.user_prompt,
-                latency_ms=(time.perf_counter() - started_at) * 1000,
+                latency_ms=latency_ms,
                 status_code=status_code,
+            )
+            iteration_entry = record_iteration(
+                trace,
+                index=iteration,
+                stream=use_stream,
+                latency_ms=latency_ms,
+                status_code=status_code,
+                finish_reason=llm_resp.finish_reason,
+                text=llm_resp.text,
+                reasoning_content=getattr(llm_resp, "reasoning_content", ""),
             )
 
             if llm_resp.tool_calls:
@@ -759,8 +806,7 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                 # 2. Execute each tool and record results.
                 for tc in llm_resp.tool_calls:
                     # Anti-deadloop check.
-                    args_hash = hash(json.dumps(tc.arguments, sort_keys=True))
-                    sig = (tc.name, args_hash)
+                    sig = normalized_tool_signature(tc.name, tc.arguments)
                     recent_calls.append(sig)
                     repeated = sum(1 for s in recent_calls[-6:] if s == sig)
                     if repeated >= 3:
@@ -769,16 +815,21 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                             "请换一种方式或直接告诉我需要什么帮助。"
                         )
                         mb.append_assistant(final_text)
-                        self._finish_agent(context, props, prefs, mb, final_text, all_tool_calls)
+                        record_abort(trace, "anti_loop")
+                        self._finish_agent(context, props, prefs, mb, final_text, trace)
                         return
 
+                    tool_started_at = time.perf_counter()
                     result = await executor.run(tc, context)
                     mb.append_tool_result(tc.id, tc.name, result)
-                    all_tool_calls.append({
-                        "name": tc.name,
-                        "arguments": tc.arguments,
-                        "result": result,
-                    })
+                    record_tool_call(
+                        trace,
+                        iteration_entry,
+                        name=tc.name,
+                        arguments=tc.arguments,
+                        result=result,
+                        duration_ms=(time.perf_counter() - tool_started_at) * 1000,
+                    )
 
                 # Continue loop for next LLM turn.
                 continue
@@ -787,12 +838,13 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                 # Final natural-language reply — done.
                 final_text = llm_resp.text or "(no response)"
                 mb.append_assistant(final_text)
-                self._finish_agent(context, props, prefs, mb, final_text, all_tool_calls)
+                self._finish_agent(context, props, prefs, mb, final_text, trace)
                 return
 
         # Exceeded max_iters.
         final_text = f"已达最大迭代次数（{max_iters}），任务可能未完成。"
-        self._finish_agent(context, props, prefs, mb, final_text, all_tool_calls)
+        record_abort(trace, "max_iters")
+        self._finish_agent(context, props, prefs, mb, final_text, trace)
 
     async def _agent_stream_iter(self, context, client, provider, url, headers,
                                  body, prefs, props):
@@ -801,6 +853,7 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
 
         Returns None on error (caller should bail out)."""
         props.is_streaming = True
+        self._set_model_thinking(context, props)
         async def operation():
             parser = provider.create_stream_parser()
             running_text = ""
@@ -847,11 +900,16 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                 pass
 
         try:
-            return await run_with_retries(
-                operation,
-                policy=RetryPolicy(max_attempts=3),
-                on_retry=on_retry,
+            return await run_with_model_timeout(
+                run_with_retries(
+                    operation,
+                    policy=RetryPolicy(max_attempts=3),
+                    on_retry=on_retry,
+                ),
+                timeout=prefs.timeout,
             )
+        except ModelServerTimeoutError:
+            raise
         except Exception as exc:
             print(f"[agent] streaming error: {exc}")
             self.show_general_error(context, solution=f"Streaming failed: {exc}")
@@ -861,6 +919,7 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
 
     async def _post_with_retries(self, context, client, *, url, headers, body, timeout):
         props: ChatCompanionProperties = context.scene.chat_companion_properties
+        self._set_model_thinking(context, props)
 
         async def operation():
             response = await client.post(
@@ -884,14 +943,18 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
             except Exception:
                 pass
 
-        return await run_with_retries(
-            operation,
-            policy=RetryPolicy(max_attempts=3),
-            on_retry=on_retry,
+        return await run_with_model_timeout(
+            run_with_retries(
+                operation,
+                policy=RetryPolicy(max_attempts=3),
+                on_retry=on_retry,
+            ),
+            timeout=timeout,
         )
 
     async def _stream_with_retries(self, context, client, *, url, headers, body, timeout):
         props: ChatCompanionProperties = context.scene.chat_companion_properties
+        self._set_model_thinking(context, props)
 
         async def operation():
             props.answer = ""
@@ -919,20 +982,76 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
             except Exception:
                 pass
 
-        return await run_with_retries(
-            operation,
-            policy=RetryPolicy(max_attempts=3),
-            on_retry=on_retry,
+        return await run_with_model_timeout(
+            run_with_retries(
+                operation,
+                policy=RetryPolicy(max_attempts=3),
+                on_retry=on_retry,
+            ),
+            timeout=timeout,
         )
 
+    def _set_model_thinking(self, context, props) -> None:
+        props.waiting_string = "Model is thinking..."
+        props.waiting_icon = "SORTTIME"
+        try:
+            if context.area is not None:
+                context.area.tag_redraw()
+        except Exception:
+            pass
+
+    def _record_usage(self, context, prefs, raw_usage, **kwargs) -> None:
+        add_usage_record(context, prefs, raw_usage, **kwargs)
+        if kwargs.get("is_error") or bool(raw_usage):
+            self._usage_recorded = True
+
+    def _record_error_usage_once(
+        self,
+        context,
+        prefs,
+        error,
+        *,
+        status_code: int = 0,
+    ) -> None:
+        if getattr(self, "_usage_recorded", False):
+            return
+        response = getattr(error, "response", None)
+        status = status_code or getattr(response, "status_code", 0)
+        started_at = getattr(self, "_request_started_at", time.perf_counter())
+        self._record_usage(
+            context,
+            prefs,
+            None,
+            mode=self._current_request_mode(context, prefs),
+            prompt=self.user_prompt,
+            latency_ms=(time.perf_counter() - started_at) * 1000,
+            status_code=status,
+            is_error=True,
+            error_message=str(error),
+        )
+
+    def _current_request_mode(self, context, prefs) -> str:
+        try:
+            has_skills = bool(skill_registry.all_skills())
+        except Exception:
+            has_skills = False
+        if has_skills and getattr(prefs, "agent_mode_enabled", True):
+            return "agent"
+        if self.use_streaming:
+            return "streaming"
+        return "plain"
+
     def _finish_agent(self, context, props, prefs, mb, final_text: str,
-                      tool_calls: list | None = None):
+                      trace: dict | None = None):
         """Write final answer to props and history."""
         answer_parts = parse_llm_content(final_text)
         props.answer = final_text
         props.answer_parts = json.dumps(answer_parts)
 
-        tool_calls_json = json.dumps(tool_calls or [], ensure_ascii=False)
+        tool_calls_json = json.dumps(
+            trace or getattr(self, "_active_trace", None) or [],
+            ensure_ascii=False,
+        )
         bpy.ops.chat_companion.add_history_item(
             display_name=self.user_prompt,
             prompt=self.user_prompt,
@@ -951,6 +1070,12 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         chat_properties: ChatCompanionProperties = (
             context.scene.chat_companion_properties
         )
+        prefs: ChatCompanionPreferences = context.preferences.addons[
+            base_package
+        ].preferences
+        self._record_error_usage_once(context, prefs, error)
+        if getattr(self, "_active_trace", None):
+            record_abort(self._active_trace, "connection_error")
 
         # tell addon that request failed
         cc_globals.request_failed = True
@@ -983,6 +1108,10 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
             answer=chat_properties.answer,
             parts=chat_properties.answer_parts,
             is_error=True,
+            tool_calls_json=json.dumps(
+                getattr(self, "_active_trace", None) or [],
+                ensure_ascii=False,
+            ),
             error_button_icon=chat_properties.error_button_icon,
             error_button_text=chat_properties.error_button_text,
             error_button_content=chat_properties.error_button_content,
@@ -1147,6 +1276,12 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         chat_properties: ChatCompanionProperties = (
             context.scene.chat_companion_properties
         )
+        prefs: ChatCompanionPreferences = context.preferences.addons[
+            base_package
+        ].preferences
+        self._record_error_usage_once(context, prefs, error or title)
+        if getattr(self, "_active_trace", None):
+            record_abort(self._active_trace, title or "error")
 
         # tell addon that request failed
         cc_globals.request_failed = True
@@ -1189,6 +1324,10 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
             answer=chat_properties.answer,
             parts=chat_properties.answer_parts,
             is_error=True,
+            tool_calls_json=json.dumps(
+                getattr(self, "_active_trace", None) or [],
+                ensure_ascii=False,
+            ),
             error_button_icon=chat_properties.error_button_icon,
             error_button_text=chat_properties.error_button_text,
             error_button_content=chat_properties.error_button_content,
