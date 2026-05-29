@@ -53,6 +53,7 @@ from .operators.operator_history import CHAT_COMPANION_OT_clear_history
 from .operators.operator_history import CHAT_COMPANION_OT_move_history
 from .operators.operator_usage import CHAT_COMPANION_OT_clear_usage
 from .operators.operator_usage import CHAT_COMPANION_OT_export_usage_csv
+from .operators.operator_usage import CHAT_COMPANION_OT_mine_logs
 from .operators.operator_install_deps import CHAT_COMPANION_OT_install_deps
 from .operators.operator_change_llm import CHAT_COMPANION_OT_select_mimo
 from .operators.operator_change_llm import CHAT_COMPANION_OT_select_open_ai
@@ -91,7 +92,7 @@ bl_info = {
     "author": "JhonYan",
     "description": "A Blender Agent based on OpenAI and DeepSeek.",
     "blender": (5, 1, 0),
-    "version": (1, 2, 1),
+    "version": (1, 2, 2),
     "location": "View3D",
     "warning": "",
     "doc_url": "",
@@ -140,6 +141,7 @@ classes = (
     CHAT_COMPANION_OT_move_history,
     CHAT_COMPANION_OT_clear_usage,
     CHAT_COMPANION_OT_export_usage_csv,
+    CHAT_COMPANION_OT_mine_logs,
     CHAT_COMPANION_OT_install_deps,
     CHAT_COMPANION_OT_select_mimo,
     CHAT_COMPANION_OT_select_open_ai,

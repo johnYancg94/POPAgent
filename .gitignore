@@ -13,3 +13,8 @@ Thumbs.db
 *.tar.gz
 dist/
 build/
+
+# Local usage telemetry — per-install runtime data, not part of the addon.
+# Episodes are mined/exported locally (see agent_core/usage_mining.py); the
+# raw logs and their archive must never be committed.
+usage_logs/

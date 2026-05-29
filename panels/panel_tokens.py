@@ -9,6 +9,7 @@ from .panel import POLYGONINGENIEUR_panel
 from ..operators.operator_usage import (
     CHAT_COMPANION_OT_clear_usage,
     CHAT_COMPANION_OT_export_usage_csv,
+    CHAT_COMPANION_OT_mine_logs,
 )
 from ..utils.usage_stats import format_cost_rmb, format_tokens, summarize_usage
 from .. import __package__ as base_package
@@ -30,6 +31,11 @@ class CHAT_COMPANION_PT_tokens(POLYGONINGENIEUR_panel, Panel):
         layout = self.layout
         layout.use_property_split = False
         layout.use_property_decorate = False
+
+        # Export is independent of scene state: usage logs accumulate on disk
+        # across all projects, so this button must show even in a brand-new
+        # file with zero scene usage, and regardless of developer mode.
+        self._draw_export(layout)
 
         if summary["requests"] == 0:
             empty = layout.column(align=True)
@@ -114,6 +120,19 @@ class CHAT_COMPANION_PT_tokens(POLYGONINGENIEUR_panel, Panel):
             shown += 1
             if shown >= 8:
                 break
+
+    def _draw_export(self, layout: UILayout):
+        box = layout.box()
+        col = box.column(align=True)
+        col.scale_y = 1.3
+        col.operator(
+            CHAT_COMPANION_OT_mine_logs.bl_idname,
+            text="Export Usage Logs",
+            icon="EXPORT",
+        )
+        hint = box.row()
+        hint.enabled = False
+        hint.label(text="Weekly: click, save the .zip, send it in.", icon="INFO")
 
     def _draw_actions(self, layout: UILayout):
         row = layout.row(align=True)
