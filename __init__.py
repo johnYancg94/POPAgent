@@ -90,7 +90,7 @@ bl_info = {
     "author": "JhonYan",
     "description": "A Blender Agent based on OpenAI and DeepSeek.",
     "blender": (5, 1, 0),
-    "version": (1, 2, 0),
+    "version": (1, 2, 1),
     "location": "View3D",
     "warning": "",
     "doc_url": "",

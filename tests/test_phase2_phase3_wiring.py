@@ -40,11 +40,29 @@ def test_operator_ask_records_error_usage_once():
     assert "_usage_recorded" in text
 
 
+def test_agent_loop_prefers_dedicated_blender_node_skills():
+    text = (ROOT / "operators" / "operator_ask.py").read_text(encoding="utf-8")
+
+    assert "Blender node expert rule" in text
+    assert "blender.material.inspect_nodes" in text
+    assert "blender.geometry_nodes.inspect" in text
+    assert "blender.material.connect_pbr_textures" in text
+    assert "blender.geometry_nodes.ensure_basic_group" in text
+    assert "blender.nodes.search_types" in text
+    assert "blender.material.add_node" in text
+    assert "blender.material.connect_nodes" in text
+    assert "blender.material.set_node_input" in text
+    assert "blender.geometry_nodes.add_node" in text
+    assert "blender.geometry_nodes.connect_nodes" in text
+    assert "blender.geometry_nodes.set_node_input" in text
+
+
 def run():
     test_operator_ask_writes_version_2_execution_trace()
     test_panel_output_uses_trace_reader_for_legacy_and_v2_debug_view()
     test_agent_loop_uses_policy_helpers()
     test_operator_ask_records_error_usage_once()
+    test_agent_loop_prefers_dedicated_blender_node_skills()
     print("test_phase2_phase3_wiring OK")
     return True
 
