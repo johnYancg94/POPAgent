@@ -22,6 +22,21 @@ class OpenAICompatProvider(BaseProvider):
             return prefs.mimo_base_url.rstrip("/") + "/chat/completions"
         return prefs.deepseek_base_url.rstrip("/") + "/chat/completions"
 
+    def _base_url(self, prefs) -> str:
+        if self._org == "openai":
+            return prefs.open_ai_base_url.rstrip("/")
+        if self._org == "mimo":
+            return prefs.mimo_base_url.rstrip("/")
+        return prefs.deepseek_base_url.rstrip("/")
+
+    def connectivity_request(self, prefs) -> tuple[str, str, dict]:
+        """Token-free reachability probe: GET /models validates network, base
+        URL and API key auth without spending any inference tokens."""
+        url = self._base_url(prefs) + "/models"
+        headers = {"Authorization": f"Bearer {self.get_api_key(prefs)}"}
+        return "GET", url, headers
+
+
     def _is_mimo_request(self, prefs) -> bool:
         return self._org == "mimo"
 

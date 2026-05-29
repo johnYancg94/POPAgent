@@ -102,6 +102,15 @@ class BaseProvider(ABC):
         """Whether this configured model can receive image content blocks."""
         return False
 
+    def connectivity_request(self, prefs) -> tuple[str, str, dict]:
+        """Return (method, url, headers) for a token-free reachability probe.
+
+        Default targets an OpenAI-style `/models` listing derived from the
+        chat-completions URL. Providers override when their base differs.
+        """
+        url = self.get_url(prefs).rsplit("/", 1)[0] + "/models"
+        return "GET", url, self.get_headers(prefs)
+
     def apply_to_props(self, prefs, props) -> None:
         """Write provider config into ChatCompanionProperties."""
         import json

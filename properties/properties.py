@@ -114,6 +114,29 @@ class ChatCompanionProperties(PropertyGroup):
     )
     # endregion
 
+    # region connection test
+    connection_test_running: BoolProperty(
+        name="Connection Test Running",
+        description="A connectivity test request is currently in flight",
+        default=False,
+        update=PropertyUpdates.update_ui,
+    )
+
+    connection_test_result: StringProperty(
+        name="Connection Test Result",
+        description="Outcome of the last connectivity test: '', 'ok', or 'fail'",
+        default="",
+        update=PropertyUpdates.update_ui,
+    )
+
+    connection_test_message: StringProperty(
+        name="Connection Test Message",
+        description="Human-readable result of the last connectivity test (latency or error)",
+        default="",
+        update=PropertyUpdates.update_ui,
+    )
+    # endregion
+
     # region LLM model
     api_details_updated: BoolProperty(
         name="API Details Updated",

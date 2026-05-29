@@ -18,6 +18,7 @@ import bpy
 import asyncio
 import json
 import time
+import os
 import traceback
 from asyncio import Future
 from bpy.props import StringProperty, BoolProperty
@@ -34,7 +35,7 @@ from ..utils.utils import (
     construct_parts,
     get_system_info,
 )
-from ..utils.usage_stats import add_usage_record
+from ..utils.usage_stats import add_usage_record, get_current_model
 from urllib.parse import quote
 from ..properties.properties import ChatCompanionProperties
 from ..properties.addon_preferences import ChatCompanionPreferences
@@ -59,6 +60,42 @@ from ..agent_core.execution_trace import (
 )
 from ..agent_core.agent_policy import choose_max_iters, normalized_tool_signature
 from ..providers import OpenAICompatProvider, AnthropicProvider
+
+
+def _addon_version_str() -> str:
+    try:
+        from .. import bl_info
+
+        return ".".join(str(v) for v in bl_info.get("version", ()))
+    except Exception:
+        return ""
+
+
+def _default_log_dir() -> str:
+    """`<addon install dir>/usage_logs`. The addon root is two levels up from
+    this file (operators/operator_ask.py)."""
+    addon_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    return os.path.join(addon_root, "usage_logs")
+
+
+def _skill_meta_lookup(name: str) -> dict | None:
+    """Map a skill name to owner/confirm-level/risk flags for the usage log.
+
+    Returns None for unknown names (e.g. the LLM hallucinated a skill), so the
+    log records the bare call without enrichment.
+    """
+    skill = skill_registry.get_skill_by_name(name)
+    if not skill:
+        return None
+    meta = skill.get("metadata", {}) or {}
+    return {
+        "owner": skill.get("owner", ""),
+        "confirm_level": skill_registry.get_permission_level(skill),
+        "writes_files": bool(meta.get("writes_files")),
+        "modifies_scene": bool(meta.get("modifies_scene")),
+        "undoable": bool(meta.get("undoable")),
+        "launches_external_process": bool(meta.get("launches_external_process")),
+    }
 
 
 class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
@@ -167,6 +204,12 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         self._usage_recorded = False
         self._active_trace = None
         self._request_started_at = time.perf_counter()
+        self._turn_cost = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "latency_ms": 0,
+        }
 
         # if it is code completion, don't use streaming
         if self.is_code_completion:
@@ -1023,6 +1066,16 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         add_usage_record(context, prefs, raw_usage, **kwargs)
         if kwargs.get("is_error") or bool(raw_usage):
             self._usage_recorded = True
+        turn = getattr(self, "_turn_cost", None)
+        if turn is not None and isinstance(raw_usage, dict):
+            turn["input_tokens"] += int(
+                raw_usage.get("input_tokens") or raw_usage.get("prompt_tokens") or 0
+            )
+            turn["output_tokens"] += int(
+                raw_usage.get("output_tokens") or raw_usage.get("completion_tokens") or 0
+            )
+            turn["total_tokens"] += int(raw_usage.get("total_tokens") or 0)
+            turn["latency_ms"] += max(0, int(kwargs.get("latency_ms", 0) or 0))
 
     def _record_error_usage_once(
         self,
@@ -1083,6 +1136,50 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         props.waiting_for_answer = False
         props.is_connecting = False
         self.report({"INFO"}, "Agent finished.")
+        self._write_usage_log(context, prefs, trace)
+
+    def _write_usage_log(self, context, prefs, trace) -> None:
+        """Append one JSONL line for this turn. Never breaks the turn on error."""
+        if not getattr(prefs, "trace_log_enabled", False):
+            return
+        trace = trace or getattr(self, "_active_trace", None)
+        if not isinstance(trace, dict):
+            return
+        try:
+            from ..agent_core import usage_log
+
+            user_id = getattr(prefs, "trace_log_user_id", "") or ""
+            if not user_id:
+                user_id = usage_log.new_user_id()
+                try:
+                    prefs.trace_log_user_id = user_id
+                except Exception:
+                    pass
+
+            include_full = bool(getattr(prefs, "trace_log_full", False))
+            episode = usage_log.build_episode(
+                trace=trace,
+                user_id=user_id,
+                env={
+                    "blender": ".".join(str(v) for v in bpy.app.version),
+                    "popagent": _addon_version_str(),
+                },
+                llm={
+                    "org": getattr(prefs, "llm_organization", ""),
+                    "model": get_current_model(prefs),
+                    "mode": self._current_request_mode(context, prefs),
+                },
+                prompt=self.user_prompt,
+                cost=dict(getattr(self, "_turn_cost", {}) or {}),
+                include_args=include_full,
+                include_results=include_full,
+                include_prompt_full=include_full,
+                meta_lookup=_skill_meta_lookup,
+            )
+            log_dir = getattr(prefs, "trace_log_dir", "") or _default_log_dir()
+            usage_log.append_episode(log_dir, episode)
+        except Exception as exc:
+            print(f"[agent] usage log write failed: {exc}")
 
     def show_connection_error(self, context, error):
 

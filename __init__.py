@@ -29,6 +29,7 @@ from .properties.item_image_attachment import CHAT_COMPANION_UL_item_image_attac
 from .properties.item_image_attachment import ImageAttachmentPropertyGroup
 from .operators.operator_ask import CHAT_COMPANION_OT_ask
 from .operators.operator_cancel import CHAT_COMPANION_OT_cancel_request
+from .operators.operator_test_connection import CHAT_COMPANION_OT_test_connection
 from .operators.operator_image_attachments import (
     CHAT_COMPANION_OT_add_blender_image,
     CHAT_COMPANION_OT_add_image_file,
@@ -117,6 +118,7 @@ classes = (
     CHAT_COMPANION_PT_tokens,
     CHAT_COMPANION_OT_ask,
     CHAT_COMPANION_OT_cancel_request,
+    CHAT_COMPANION_OT_test_connection,
     CHAT_COMPANION_OT_add_blender_image,
     CHAT_COMPANION_OT_add_image_file,
     CHAT_COMPANION_OT_clear_image_attachments,

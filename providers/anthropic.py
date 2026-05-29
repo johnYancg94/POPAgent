@@ -14,6 +14,18 @@ class AnthropicProvider(BaseProvider):
         base = getattr(prefs, "anthropic_base_url", "https://api.anthropic.com/v1")
         return base.rstrip("/") + "/messages"
 
+    def connectivity_request(self, prefs) -> tuple[str, str, dict]:
+        """Token-free reachability probe: GET /models validates network, base
+        URL and API key auth without spending any inference tokens."""
+        base = getattr(prefs, "anthropic_base_url", "https://api.anthropic.com/v1")
+        url = base.rstrip("/") + "/models"
+        headers = {
+            "x-api-key": self.get_api_key(prefs),
+            "anthropic-version": _ANTHROPIC_API_VERSION,
+        }
+        return "GET", url, headers
+
+
     def get_headers(self, prefs) -> dict:
         return {
             "x-api-key": self.get_api_key(prefs),

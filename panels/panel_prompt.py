@@ -194,6 +194,34 @@ class CHAT_COMPANION_PT_prompt(POLYGONINGENIEUR_panel, Panel):
                 else:
                     no_api_key_right.label(text=line)
 
+        # ! connectivity test
+        if not no_api_key:
+            test_row: UILayout = layout.row(align=True)
+            test_row.enabled = (
+                not props.waiting_for_answer
+                and not props.connection_test_running
+            )
+            test_button_text = (
+                "Testing..." if props.connection_test_running else "Test Connection"
+            )
+            test_row.operator(
+                operator="chat_companion.test_connection",
+                text=test_button_text,
+                icon="LINKED",
+            )
+            result = props.connection_test_result
+            if result:
+                status_row: UILayout = layout.row(align=True)
+                if result == "ok":
+                    status_row.label(
+                        text=props.connection_test_message, icon="CHECKMARK"
+                    )
+                else:
+                    status_row.alert = True
+                    status_row.label(
+                        text=props.connection_test_message, icon="ERROR"
+                    )
+
         layout.separator()
 
         # ! prompt

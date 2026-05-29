@@ -271,6 +271,33 @@ class ChatCompanionPreferences(AddonPreferences):
         default=5,
     )
 
+    # region usage log (append-only JSONL sink for team-wide aggregation)
+    trace_log_enabled: props.BoolProperty(
+        name="Log Agent Usage",
+        description="Append one JSON line per finished agent turn to disk (skill names, outcomes, signals). Used to pool team usage and find failure modes, denied skills, and unmatched requests. Metadata only by default — no scene data or asset paths.",
+        default=True,
+    )
+
+    trace_log_dir: props.StringProperty(
+        name="Usage Log Folder",
+        description="Folder for per-day usage logs, written as <folder>/<user id>/<YYYY-MM-DD>.jsonl. Point team members at a synced/NAS folder to pool logs. Empty = ~/POPAgent_traces.",
+        subtype="DIR_PATH",
+        default="",
+    )
+
+    trace_log_user_id: props.StringProperty(
+        name="Usage Log User ID",
+        description="Pseudonymous, stable per-install id used to namespace this user's log files. Auto-generated on first log if empty; reveals nothing about the host.",
+        default="",
+    )
+
+    trace_log_full: props.BoolProperty(
+        name="Log Full Request Text",
+        description="Also store full prompt text and tool argument/result previews in each log line. Off by default to avoid leaking client asset paths or scene details. Only enable for trusted internal aggregation.",
+        default=True,
+    )
+    # endregion
+
     blender_api_docs_url: props.StringProperty(
         name="Blender API Docs URL",
         description="Official Blender Python API documentation root used by blender.api_search.",
@@ -475,6 +502,27 @@ class ChatCompanionPreferences(AddonPreferences):
         api_docs_right.prop(self, "blender_api_docs_url", text="URL")
         api_docs_right.prop(self, "blender_api_docs_path", text="Local")
         api_docs_right.prop(self, "blender_api_docs_prefer_local", text="Prefer Local")
+
+        layout.box()
+
+        # ! usage log
+        usage_settings = layout.column(align=True)
+        usage_settings.label(text="Usage Log", icon="FILE_TEXT")
+        usage_enable_split: UILayout = usage_settings.split(align=True, factor=2 / 5)
+        usage_enable_left: UILayout = usage_enable_split.row(align=True)
+        usage_enable_left.alignment = "RIGHT"
+        usage_enable_left.label(text="Log Agent Usage")
+        usage_enable_right: UILayout = usage_enable_split.column(align=True)
+        usage_enable_right.prop(self, "trace_log_enabled", text="")
+        usage_body: UILayout = usage_settings.column(align=True)
+        usage_body.enabled = self.trace_log_enabled
+        usage_dir_split: UILayout = usage_body.split(align=True, factor=2 / 5)
+        usage_dir_left: UILayout = usage_dir_split.row(align=True)
+        usage_dir_left.alignment = "RIGHT"
+        usage_dir_left.label(text="Log Folder")
+        usage_dir_right: UILayout = usage_dir_split.column(align=True)
+        usage_dir_right.prop(self, "trace_log_dir", text="")
+        usage_dir_right.prop(self, "trace_log_full", text="Log Full Request Text")
 
         layout.box()
 
