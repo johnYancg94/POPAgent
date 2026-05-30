@@ -13,11 +13,13 @@ from ..operators.operator_usage import (
 )
 from ..utils.usage_stats import format_cost_rmb, format_tokens, summarize_usage
 from .. import __package__ as base_package
+from ..translations import POPAGENT_CTX
 
 
 class CHAT_COMPANION_PT_tokens(POLYGONINGENIEUR_panel, Panel):
     bl_idname = "CHAT_COMPANION_PT_tokens"
     bl_label = "Usage"
+    bl_translation_context = POPAGENT_CTX
     bl_order = 3
     bl_options = {"DEFAULT_CLOSED"}
 
@@ -83,8 +85,7 @@ class CHAT_COMPANION_PT_tokens(POLYGONINGENIEUR_panel, Panel):
         self._metric(grid, "Requests", str(requests), "FILE_TEXT")
         self._metric(grid, "Total tokens", format_tokens(summary["total_tokens"]), "SMALL_CAPS")
         self._metric(grid, "RMB cost", format_cost_rmb(summary["estimated_cost_rmb"]), "TAG")
-        self._metric(grid, "Success", f"{success_rate}%", "CHECKMARK")
-
+        self._metric(grid, "Success", f"{success_rate}%", "CHECKMARK", label_ctxt=POPAGENT_CTX)
         if summary["avg_latency_ms"]:
             latency = box.row(align=True)
             latency.label(text=f"Average latency: {summary['avg_latency_ms']} ms", icon="TIME")
@@ -128,6 +129,7 @@ class CHAT_COMPANION_PT_tokens(POLYGONINGENIEUR_panel, Panel):
         col.operator(
             CHAT_COMPANION_OT_mine_logs.bl_idname,
             text="Export Usage Logs",
+            text_ctxt="*",
             icon="EXPORT",
         )
         hint = box.row()
@@ -144,12 +146,13 @@ class CHAT_COMPANION_PT_tokens(POLYGONINGENIEUR_panel, Panel):
         clear = row.operator(
             CHAT_COMPANION_OT_clear_usage.bl_idname,
             text="Clear",
+            text_ctxt=POPAGENT_CTX,
             icon="TRASH",
         )
 
-    def _metric(self, layout: UILayout, label: str, value: str, icon: str):
+    def _metric(self, layout: UILayout, label: str, value: str, icon: str, label_ctxt: str = ""):
         col = layout.column(align=True)
-        col.label(text=label, icon=icon)
+        col.label(text=label, text_ctxt=label_ctxt, icon=icon)
         value_row = col.row(align=True)
         value_row.scale_y = 1.2
         value_row.label(text=value)

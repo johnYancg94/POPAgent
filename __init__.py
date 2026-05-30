@@ -5,6 +5,7 @@ import os
 from .utils import cc_globals
 from .utils.async_loop import AsyncLoopModalOperator, setup_asyncio_executor
 from .utils.dependencies import Dependencies
+from . import translations
 from .agent_core.main_thread import shutdown_main_thread
 from .agent_core import skill_registry as _skill_registry
 from .agent_core.confirm_dialog import POPAGENT_OT_confirm_skill, clear_session_trust
@@ -92,7 +93,7 @@ bl_info = {
     "author": "JhonYan",
     "description": "A Blender Agent based on OpenAI and DeepSeek.",
     "blender": (5, 1, 0),
-    "version": (1, 2, 2),
+    "version": (1, 2, 3),
     "location": "View3D",
     "warning": "",
     "doc_url": "",
@@ -218,6 +219,12 @@ def register():
 
     setup_asyncio_executor()
 
+    # 注册中文翻译（必须在类注册之前）
+    try:
+        bpy.app.translations.register(__name__, translations.translations_dict)
+    except ValueError:
+        pass
+
     for c in classes:
         bpy.utils.register_class(c)
 
@@ -272,6 +279,12 @@ def register():
 
 def unregister():
     """Unregister and delete everything that was registered and created."""
+
+    # 先注销翻译再注销类
+    try:
+        bpy.app.translations.unregister(__name__)
+    except ValueError:
+        pass
 
     shutdown_main_thread()
     _skill_registry.clear_all()

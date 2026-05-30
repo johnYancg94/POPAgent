@@ -17,6 +17,7 @@ from ..operators.operator_history import CHAT_COMPANION_OT_favorite_history_item
 from ..operators.operator_history import CHAT_COMPANION_OT_delete_history_item
 from ..operators.operator_history import CHAT_COMPANION_OT_clear_history
 from .. import __package__ as base_package
+from ..translations import POPAGENT_CTX
 
 
 class CHAT_COMPANION_PT_history(POLYGONINGENIEUR_panel, Panel):
@@ -37,7 +38,7 @@ class CHAT_COMPANION_PT_history(POLYGONINGENIEUR_panel, Panel):
         split.scale_y = 1.1
         left = split.row()
         left.alignment = "LEFT"
-        left.label(text="History", icon="RECOVER_LAST")
+        left.label(text="History", text_ctxt=POPAGENT_CTX, icon="RECOVER_LAST")
         right = split.row()
         right.alignment = "RIGHT"
 

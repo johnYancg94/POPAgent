@@ -1,4 +1,4 @@
-# POPAgent v1.2.2 — Blender AI Agent
+# POPAgent v1.2.3 — Blender AI Agent
 
 [![Blender](https://img.shields.io/badge/Blender-5.1+-blue.svg)](https://www.blender.org/)
 [![Python](https://img.shields.io/badge/Python-3.11+-green.svg)](https://www.python.org/)
@@ -274,7 +274,7 @@ query_api() → _agent_query()
 
 ```
 POPAgent/
-├── __init__.py                  # 注册入口 (bl_info version 1.2.2)
+├── __init__.py                  # 注册入口 (bl_info version 1.2.3)
 ├── agent_core/                 # Agent 核心
 │   ├── skill_registry.py       # 全局 Skill 注册表 + 权限覆盖
 │   ├── executor.py             # Skill 调度器（安全门控）

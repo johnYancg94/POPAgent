@@ -207,6 +207,7 @@ class CHAT_COMPANION_PT_prompt(POLYGONINGENIEUR_panel, Panel):
             test_row.operator(
                 operator="chat_companion.test_connection",
                 text=test_button_text,
+                text_ctxt="*",
                 icon="LINKED",
             )
             result = props.connection_test_result

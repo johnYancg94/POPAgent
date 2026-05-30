@@ -15,11 +15,13 @@ import bpy
 from bpy.types import Menu, UILayout
 from ..utils import cc_globals
 from ..operators.operator_full_version import chat_companion_features
+from ..translations import POPAGENT_CTX
 
 
 class CHAT_COMPANION_MT_add_attachment(Menu):
     bl_idname = "CHAT_COMPANION_MT_add_attachment"
     bl_label = "Add"
+    bl_translation_context = POPAGENT_CTX
     bl_description = "Add an attachment"
 
     def draw(self, context):

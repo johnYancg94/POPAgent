@@ -726,7 +726,17 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                 system_text = system_text + "\n\n" + scene_summary
         except Exception as exc:
             print(f"[agent] scene summary failed: {exc}")
+        multimodal_enabled = bool(getattr(props, "multimodal_enabled", False))
+        include_image_results = (
+            multimodal_enabled and provider.supports_image_input(prefs)
+        )
         skills = skill_registry.all_skills()
+        if not include_image_results:
+            # No image channel: drop the screenshot skill entirely so the model
+            # is never offered a tool whose result it cannot read. Offering it
+            # while telling the model "don't call it" invites the model to
+            # hallucinate that the tool does not exist.
+            skills = [s for s in skills if s.get("name") != "blender.viewport_screenshot"]
         tools = provider.skills_to_tools(skills)
 
         max_iters = choose_max_iters(
@@ -744,10 +754,6 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         # provider declares support. Falls back to non-streaming otherwise.
         use_stream = bool(getattr(prefs, "use_streaming", False)) and \
             provider.supports_streaming_with_tools()
-        multimodal_enabled = bool(getattr(props, "multimodal_enabled", False))
-        include_image_results = (
-            multimodal_enabled and provider.supports_image_input(prefs)
-        )
         user_images = []
         if include_image_results:
             user_images = collect_enabled_image_payloads(
@@ -761,10 +767,13 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
             )
         else:
             system_text += (
-                "\n\nVision rule: the current model configuration does not "
-                "support image input. Do not call `blender.viewport_screenshot` "
-                "to visually inspect the scene; explain that visual reading "
-                "requires enabling multimodal input and using a compatible model."
+                "\n\nVision rule: the current model configuration cannot read "
+                "image input, so the viewport screenshot tool is not available "
+                "this turn. When the user asks about what is visually in the "
+                "viewport, explain plainly that visual reading requires enabling "
+                "Multimodal input and using a compatible model. Do not claim the "
+                "capability is missing from Blender, and never tell the user to "
+                "run a screenshot script themselves."
             )
 
         mb = MessageBuilder.from_history(history, max_items=max_history_context)
