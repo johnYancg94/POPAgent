@@ -41,6 +41,9 @@ class CHAT_COMPANION_OT_add_history_item(Operator):
     is_enabled: bpy.props.BoolProperty(default=True)
     llm_organization: bpy.props.StringProperty()
     tool_calls_json: bpy.props.StringProperty(default="")
+    episode_id: bpy.props.StringProperty(default="")
+    episode_log_path: bpy.props.StringProperty(default="")
+    feedback_rating: bpy.props.StringProperty(default="")
 
     # error properties
     is_error: bpy.props.BoolProperty(default=False)
@@ -72,6 +75,9 @@ class CHAT_COMPANION_OT_add_history_item(Operator):
         history_item.icon = "VIEWZOOM"
         history_item.llm_organization = prefs.llm_organization
         history_item.tool_calls_json = self.tool_calls_json
+        history_item.episode_id = self.episode_id
+        history_item.episode_log_path = self.episode_log_path
+        history_item.feedback_rating = self.feedback_rating
 
         history_item.is_error = self.is_error
         history_item.error_button_icon = self.error_button_icon
@@ -162,6 +168,10 @@ class CHAT_COMPANION_OT_delete_history_item(Operator):
                         "answer_parts": history_item.answer_parts,
                         "is_favorite": history_item.is_favorite,
                         "llm_organization": history_item.llm_organization,
+                        "tool_calls_json": history_item.tool_calls_json,
+                        "episode_id": history_item.episode_id,
+                        "episode_log_path": history_item.episode_log_path,
+                        "feedback_rating": history_item.feedback_rating,
                         "is_error": history_item.is_error,
                         "error_button_icon": history_item.error_button_icon,
                         "error_button_text": history_item.error_button_text,
@@ -189,6 +199,10 @@ class CHAT_COMPANION_OT_delete_history_item(Operator):
                 is_favorite=item_to_keep["is_favorite"],
                 is_error=item_to_keep["is_error"],
                 llm_organization=item_to_keep["llm_organization"],
+                tool_calls_json=item_to_keep["tool_calls_json"],
+                episode_id=item_to_keep["episode_id"],
+                episode_log_path=item_to_keep["episode_log_path"],
+                feedback_rating=item_to_keep["feedback_rating"],
                 error_button_icon=item_to_keep["error_button_icon"],
                 error_button_text=item_to_keep["error_button_text"],
                 error_button_content=item_to_keep["error_button_content"],
@@ -255,6 +269,10 @@ class CHAT_COMPANION_OT_clear_history(Operator):
                         "answer_parts": item.answer_parts,
                         "is_favorite": item.is_favorite,
                         "llm_organization": item.llm_organization,
+                        "tool_calls_json": item.tool_calls_json,
+                        "episode_id": item.episode_id,
+                        "episode_log_path": item.episode_log_path,
+                        "feedback_rating": item.feedback_rating,
                         "is_error": item.is_error,
                         "error_button_icon": item.error_button_icon,
                         "error_button_text": item.error_button_text,
@@ -280,6 +298,10 @@ class CHAT_COMPANION_OT_clear_history(Operator):
                 parts=fav["answer_parts"],
                 is_favorite=fav["is_favorite"],
                 llm_organization=fav["llm_organization"],
+                tool_calls_json=fav["tool_calls_json"],
+                episode_id=fav["episode_id"],
+                episode_log_path=fav["episode_log_path"],
+                feedback_rating=fav["feedback_rating"],
                 is_error=fav["is_error"],
                 error_button_icon=fav["error_button_icon"],
                 error_button_text=fav["error_button_text"],

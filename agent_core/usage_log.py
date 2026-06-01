@@ -184,3 +184,74 @@ def append_episode(log_dir: str | Path, episode: dict) -> str:
     with path.open("a", encoding="utf-8") as fh:
         fh.write(episode_to_line(episode))
     return str(path)
+
+
+# --- user feedback (thumbs up/down) -------------------------------------
+# A subjective quality signal the mechanical signals can't derive: a turn may
+# call every skill correctly with zero errors yet still not be what the user
+# wanted. Stored as an optional top-level "feedback" key so old lines without
+# it stay valid and the miner treats absence as "unrated".
+
+_RATING_VALUES = {"up", "down"}
+
+
+def apply_feedback(
+    episode: dict, rating: str, *, now: datetime | None = None
+) -> dict:
+    """Set/clear the user rating on an episode dict, in place. Returns it.
+
+    `rating` is "up", "down", or "" (and any other falsy/unknown value) which
+    clears the rating. Single source of truth for the feedback shape so the
+    operator and the rewrite path agree.
+    """
+    if rating in _RATING_VALUES:
+        ts = (now or datetime.now().astimezone()).isoformat(timespec="seconds")
+        episode["feedback"] = {"rating": rating, "ts": ts}
+    else:
+        episode.pop("feedback", None)
+    return episode
+
+
+def rewrite_feedback(
+    log_path: str | Path,
+    episode_id: str,
+    rating: str,
+    *,
+    now: datetime | None = None,
+) -> bool:
+    """Find the line whose episode_id matches and rewrite it with `rating`.
+
+    Reads the whole JSONL, rewrites only the matching record, preserves every
+    other line verbatim (including un-parseable ones, so a corrupt line never
+    drops sibling data). Returns True if a record was matched and rewritten,
+    False if the file/line wasn't found.
+    """
+    path = Path(log_path).expanduser()
+    if not episode_id or not path.is_file():
+        return False
+
+    out_lines: list[str] = []
+    matched = False
+    with path.open("r", encoding="utf-8") as fh:
+        for raw in fh:
+            stripped = raw.strip()
+            if not stripped:
+                continue
+            try:
+                ep = json.loads(stripped)
+            except (ValueError, TypeError):
+                out_lines.append(stripped + "\n")  # keep corrupt line as-is
+                continue
+            if not matched and ep.get("episode_id") == episode_id:
+                apply_feedback(ep, rating, now=now)
+                matched = True
+                out_lines.append(episode_to_line(ep))
+            else:
+                out_lines.append(episode_to_line(ep))
+
+    if not matched:
+        return False
+
+    with path.open("w", encoding="utf-8") as fh:
+        fh.writelines(out_lines)
+    return True

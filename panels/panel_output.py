@@ -22,6 +22,7 @@ from ..operators.operator_copy_error import CHAT_COMPANION_OT_copy_error
 from ..operators.operator_answer_view import CHAT_COMPANION_OT_open_answer_text
 from ..operators.operator_answer_view import CHAT_COMPANION_OT_toggle_answer_code
 from ..operators.operator_ask import CHAT_COMPANION_OT_ask
+from ..operators.operator_feedback import CHAT_COMPANION_OT_rate_answer
 from ..utils.utils import wrap_string_to_panel
 from ..utils.utils import wrap_array
 from ..utils.utils import can_send_prompt
@@ -107,6 +108,7 @@ class CHAT_COMPANION_PT_output(POLYGONINGENIEUR_panel, Panel):
             self.draw_raw_answer(context, layout, chat_properties.answer)
             if addon_preferences.developer_mode:
                 self.draw_selected_execution_trace(context, layout, chat_properties)
+            self.draw_feedback(context, layout, chat_properties)
             return
 
         expanded_code_indices = self.parse_expanded_indices(
@@ -458,6 +460,54 @@ class CHAT_COMPANION_PT_output(POLYGONINGENIEUR_panel, Panel):
             )
             copy_all_props.content_type = "FULL"
             copy_all_props.content = chat_properties.answer
+
+        self.draw_feedback(context, layout, chat_properties)
+
+    def draw_feedback(
+        self,
+        context: Context,
+        layout: UILayout,
+        chat_properties: ChatCompanionProperties,
+    ):
+        """Like/dislike the selected answer, written back to its log episode.
+
+        Only shown when the turn has an on-disk episode to rate (episode_id set);
+        when usage logging is off there's nothing to write to, so the row hides.
+        Uses the custom good/bad PNG icons from the addon's preview collection.
+        """
+        history = context.scene.chat_companion_history
+        item = history.get(str(chat_properties.selected_history_item))
+        if not item or not item.episode_id:
+            return
+
+        pcoll = cc_globals.preview_collections["main"]
+
+        feedback_row = layout.row(align=True)
+        feedback_row.scale_y = 0.9
+        feedback_row.enabled = can_send_prompt(context)
+
+        label_col = feedback_row.row()
+        label_col.alignment = "LEFT"
+        label_col.label(text="Was this helpful?")
+
+        buttons = feedback_row.row(align=True)
+        buttons.alignment = "RIGHT"
+
+        up = buttons.operator(
+            operator=CHAT_COMPANION_OT_rate_answer.bl_idname,
+            text="",
+            icon_value=pcoll["good_icon"].icon_id,
+            depress=item.feedback_rating == "up",
+        )
+        up.rating = "up"
+
+        down = buttons.operator(
+            operator=CHAT_COMPANION_OT_rate_answer.bl_idname,
+            text="",
+            icon_value=pcoll["bad_icon"].icon_id,
+            depress=item.feedback_rating == "down",
+        )
+        down.rating = "down"
 
     def draw_answer_actions(
         self,

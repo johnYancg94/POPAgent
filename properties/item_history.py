@@ -48,6 +48,25 @@ class HistoryPropertyGroup(bpy.types.PropertyGroup):
         default="",
     )
 
+    # Usage-log feedback: link this turn back to its on-disk JSONL episode so the
+    # thumbs up/down buttons can rewrite that line. Empty episode_id = no log
+    # written for this turn (logging off / write failed) -> feedback hidden.
+    episode_id: bpy.props.StringProperty(
+        name="Episode ID",
+        description="ID of this turn's usage-log episode on disk",
+        default="",
+    )
+    episode_log_path: bpy.props.StringProperty(
+        name="Episode Log Path",
+        description="Path to the JSONL file holding this turn's episode",
+        default="",
+    )
+    feedback_rating: bpy.props.StringProperty(
+        name="Feedback Rating",
+        description="User rating for this answer: '', 'up', or 'down'",
+        default="",
+    )
+
     is_error: bpy.props.BoolProperty()
     error_button_icon: bpy.props.StringProperty()
     error_button_text: bpy.props.StringProperty()

@@ -18,7 +18,8 @@ sys.modules["usage_mining"] = mining
 spec.loader.exec_module(mining)
 
 
-def _ep(episode_id, *, prompt="p", tools=(), signals=None, ts="2026-05-29T10:00:00"):
+def _ep(episode_id, *, prompt="p", tools=(), signals=None, ts="2026-05-29T10:00:00",
+        feedback=None):
     sig = {
         "tool_count": len(tools),
         "error_count": sum(1 for t in tools if not t.get("ok", True)),
@@ -31,13 +32,16 @@ def _ep(episode_id, *, prompt="p", tools=(), signals=None, ts="2026-05-29T10:00:
     }
     if signals:
         sig.update(signals)
-    return {
+    ep = {
         "episode_id": episode_id,
         "ts": ts,
         "request": {"prompt_preview": prompt},
         "tools": list(tools),
         "signals": sig,
     }
+    if feedback is not None:
+        ep["feedback"] = {"rating": feedback, "ts": ts}
+    return ep
 
 
 def _tool(name, *, ok=True, error_kind="", owner="builtin", confirm_level="never"):
@@ -155,6 +159,44 @@ def test_aggregate_never_used_only_with_known_skills():
     assert "never_used" not in plain
     known = mining.aggregate(eps, known_skills=["export.fbx", "naming.rename"])
     assert known["never_used"] == ["naming.rename"]
+
+
+# ---- feedback (thumbs up/down) ----------------------------------------------
+
+def test_aggregate_counts_feedback_totals_and_per_skill():
+    eps = [
+        _ep("f1", tools=[_tool("export.fbx")], feedback="up"),
+        _ep("f2", tools=[_tool("export.fbx"), _tool("naming.rename")],
+            feedback="down"),
+        _ep("f3", tools=[_tool("export.fbx")]),  # unrated
+    ]
+    rep = mining.aggregate(eps)
+    assert rep["totals"]["feedback_up"] == 1
+    assert rep["totals"]["feedback_down"] == 1
+    fbx = rep["per_skill"]["export.fbx"]
+    assert fbx["feedback_up"] == 1 and fbx["feedback_down"] == 1
+    assert fbx["down_samples"] == ["f2"]
+    # naming.rename only appeared in the down-voted turn
+    rename = rep["per_skill"]["naming.rename"]
+    assert rename["feedback_down"] == 1 and rename["feedback_up"] == 0
+
+
+def test_aggregate_handles_legacy_episodes_without_feedback():
+    # old episodes (no feedback key) must count as nothing, not raise
+    eps = [_ep("old1", tools=[_tool("export.fbx")])]
+    rep = mining.aggregate(eps)
+    assert rep["totals"]["feedback_up"] == 0
+    assert rep["totals"]["feedback_down"] == 0
+    assert rep["per_skill"]["export.fbx"]["feedback_down"] == 0
+
+
+def test_format_report_includes_feedback_section():
+    eps = [_ep("f2", tools=[_tool("export.fbx")], feedback="down")]
+    text = mining.format_report(mining.aggregate(eps))
+    assert "[FEEDBACK]" in text
+    assert "export.fbx" in text
+    assert "1up/" not in text  # totals shows 0up/1down
+    assert "0up/1down" in text
 
 
 def test_aggregate_fail_samples_capped():

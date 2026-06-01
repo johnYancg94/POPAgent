@@ -130,10 +130,12 @@ def aggregate(
         {
           "episode_count": int,
           "tool_call_count": int,
-          "totals": {error_count, aborted, any_denied, no_skill_matched},
+          "totals": {error_count, aborted, any_denied, no_skill_matched,
+                     feedback_up, feedback_down},
           "per_skill": {                 # one entry per skill that was called
               name: {calls, errors, denied, error_kinds:{kind:n},
-                     owner, confirm_level, fail_samples:[episode_id,...]}
+                     owner, confirm_level, fail_samples:[episode_id,...],
+                     feedback_up, feedback_down, down_samples:[episode_id,...]}
           },
           "no_skill_matched": {          # the gap: user wanted X, no skill fit
               "count": int,
@@ -142,6 +144,11 @@ def aggregate(
           "aborts": {reason: count},
           "never_used": [name, ...]      # only if known_skills was passed
         }
+
+    Feedback counts are episode-level user ratings (thumbs up/down) smeared onto
+    each skill the rated turn called; a rating is about the whole turn, so a
+    skill's feedback_down means "appeared in N down-voted turns", not that the
+    skill itself failed.
 
     `known_skills` is the current registry's skill names; passing it lets the
     report flag registered-but-never-called skills (dead weight to consider
@@ -157,6 +164,8 @@ def aggregate(
         "aborted": 0,
         "any_denied": 0,
         "no_skill_matched": 0,
+        "feedback_up": 0,
+        "feedback_down": 0,
     }
     tool_call_count = 0
 
@@ -179,6 +188,16 @@ def aggregate(
                     {"prompt": prompt, "episode_id": episode_id}
                 )
 
+        # User feedback is a rating of the whole turn, not a single skill. We
+        # count it at the episode level (totals) and also smear it onto every
+        # skill the turn called, so the report can flag skills that recur in
+        # down-voted turns. Absent feedback key = unrated, counted as nothing.
+        rating = (ep.get("feedback", {}) or {}).get("rating", "")
+        if rating == "up":
+            totals["feedback_up"] += 1
+        elif rating == "down":
+            totals["feedback_down"] += 1
+
         for tool in ep.get("tools", []) or []:
             tool_call_count += 1
             name = tool.get("name", "") or "(unnamed)"
@@ -192,9 +211,17 @@ def aggregate(
                     "owner": tool.get("owner", "") or "",
                     "confirm_level": tool.get("confirm_level", "") or "",
                     "fail_samples": [],
+                    "feedback_up": 0,
+                    "feedback_down": 0,
+                    "down_samples": [],
                 },
             )
             entry["calls"] += 1
+            if rating == "up":
+                entry["feedback_up"] += 1
+            elif rating == "down":
+                entry["feedback_down"] += 1
+                _bump_sample(entry["down_samples"], episode_id)
             if not tool.get("ok", True):
                 entry["errors"] += 1
                 kind = tool.get("error_kind", "") or "unknown"
@@ -240,12 +267,15 @@ def format_report(report: dict, *, top_n: int = 10) -> str:
     totals = report.get("totals", {}) or {}
     lines.append(
         "Totals: errors={error_count} aborted={aborted} "
-        "denied={any_denied} no_skill_matched={no_skill_matched}".format(
+        "denied={any_denied} no_skill_matched={no_skill_matched} "
+        "feedback={feedback_up}up/{feedback_down}down".format(
             **{
                 "error_count": totals.get("error_count", 0),
                 "aborted": totals.get("aborted", 0),
                 "any_denied": totals.get("any_denied", 0),
                 "no_skill_matched": totals.get("no_skill_matched", 0),
+                "feedback_up": totals.get("feedback_up", 0),
+                "feedback_down": totals.get("feedback_down", 0),
             }
         )
     )
@@ -290,6 +320,24 @@ def format_report(report: dict, *, top_n: int = 10) -> str:
             lines.append(
                 f"  {name}: denied {e['denied']}x "
                 f"(confirm_level={e['confirm_level'] or '?'})"
+            )
+
+    down_voted = sorted(
+        (v for v in per_skill.items() if v[1].get("feedback_down")),
+        key=lambda kv: kv[1].get("feedback_down", 0),
+        reverse=True,
+    )
+    if down_voted:
+        lines.append("")
+        lines.append("[FEEDBACK] skills recurring in down-voted turns "
+                     "(user marked the answer unhelpful):")
+        for name, e in down_voted[:top_n]:
+            samples = ", ".join(s[:8] for s in e.get("down_samples", []))
+            up = e.get("feedback_up", 0)
+            down = e.get("feedback_down", 0)
+            lines.append(
+                f"  {name}: {down} down / {up} up of {e['calls']} calls"
+                + (f"  e.g. {samples}" if samples else "")
             )
 
     aborts = report.get("aborts", {}) or {}

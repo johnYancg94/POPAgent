@@ -56,6 +56,7 @@ from .operators.operator_history import CHAT_COMPANION_OT_move_history
 from .operators.operator_usage import CHAT_COMPANION_OT_clear_usage
 from .operators.operator_usage import CHAT_COMPANION_OT_export_usage_csv
 from .operators.operator_usage import CHAT_COMPANION_OT_mine_logs
+from .operators.operator_feedback import CHAT_COMPANION_OT_rate_answer
 from .operators.operator_install_deps import CHAT_COMPANION_OT_install_deps
 from .operators.operator_change_llm import CHAT_COMPANION_OT_select_mimo
 from .operators.operator_change_llm import CHAT_COMPANION_OT_select_open_ai
@@ -143,6 +144,7 @@ classes = (
     CHAT_COMPANION_OT_clear_usage,
     CHAT_COMPANION_OT_export_usage_csv,
     CHAT_COMPANION_OT_mine_logs,
+    CHAT_COMPANION_OT_rate_answer,
     CHAT_COMPANION_OT_install_deps,
     CHAT_COMPANION_OT_select_mimo,
     CHAT_COMPANION_OT_select_open_ai,
@@ -214,6 +216,8 @@ def register():
     pcoll.load(
         "anthropic_icon", os.path.join(chat_comp_icons_dir, "anthropic.png"), "IMAGE"
     )
+    pcoll.load("good_icon", os.path.join(chat_comp_icons_dir, "good.png"), "IMAGE")
+    pcoll.load("bad_icon", os.path.join(chat_comp_icons_dir, "bad.png"), "IMAGE")
 
     cc_globals.preview_collections["main"] = pcoll
 

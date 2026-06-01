@@ -167,3 +167,66 @@ def test_episode_to_line_is_single_json_line():
     assert line.endswith("\n")
     assert "\n" not in line[:-1]
     json.loads(line)  # valid JSON
+
+
+# --- feedback (thumbs up/down) ------------------------------------------
+
+def test_apply_feedback_sets_and_clears():
+    ep = _episode(_trace(), episode_id="e1")
+    usage_log.apply_feedback(ep, "up", now=_NOW)
+    assert ep["feedback"]["rating"] == "up"
+    assert ep["feedback"]["ts"].startswith("2026-05-29T14:03:11")
+    usage_log.apply_feedback(ep, "down", now=_NOW)
+    assert ep["feedback"]["rating"] == "down"
+    # empty / unknown rating clears the key entirely
+    usage_log.apply_feedback(ep, "", now=_NOW)
+    assert "feedback" not in ep
+    usage_log.apply_feedback(ep, "garbage", now=_NOW)
+    assert "feedback" not in ep
+
+
+def test_rewrite_feedback_hits_only_matching_line(tmp_path):
+    path = usage_log.append_episode(tmp_path, _episode(_trace(), episode_id="a"))
+    usage_log.append_episode(tmp_path, _episode(_trace(), episode_id="b"))
+
+    assert usage_log.rewrite_feedback(path, "b", "down", now=_NOW) is True
+    lines = Path(path).read_text(encoding="utf-8").strip().splitlines()
+    by_id = {json.loads(l)["episode_id"]: json.loads(l) for l in lines}
+    assert by_id["b"]["feedback"]["rating"] == "down"
+    assert "feedback" not in by_id["a"]  # untouched line stays clean
+
+
+def test_rewrite_feedback_missing_id_returns_false(tmp_path):
+    path = usage_log.append_episode(tmp_path, _episode(_trace(), episode_id="a"))
+    assert usage_log.rewrite_feedback(path, "nope", "up") is False
+    # nonexistent file path also returns False, no raise
+    assert usage_log.rewrite_feedback(tmp_path / "missing.jsonl", "a", "up") is False
+
+
+def test_rewrite_feedback_preserves_corrupt_lines(tmp_path):
+    path = usage_log.append_episode(tmp_path, _episode(_trace(), episode_id="a"))
+    with Path(path).open("a", encoding="utf-8") as fh:
+        fh.write("{ this is not valid json\n")
+    usage_log.append_episode(tmp_path, _episode(_trace(), episode_id="c"))
+
+    assert usage_log.rewrite_feedback(path, "c", "up", now=_NOW) is True
+    lines = Path(path).read_text(encoding="utf-8").strip().splitlines()
+    assert "{ this is not valid json" in lines  # corrupt line kept verbatim
+    # both real episodes still present and parseable
+    ids = {json.loads(l)["episode_id"] for l in lines if _is_json(l)}
+    assert ids == {"a", "c"}
+
+
+def test_rewrite_feedback_keeps_unicode_unescaped(tmp_path):
+    path = usage_log.append_episode(tmp_path, _episode(_trace(), episode_id="z"))
+    usage_log.rewrite_feedback(path, "z", "up", now=_NOW)
+    raw = Path(path).read_text(encoding="utf-8")
+    assert "导出选中物体为fbx" in raw  # ensure_ascii=False convention upheld
+
+
+def _is_json(line: str) -> bool:
+    try:
+        json.loads(line)
+        return True
+    except ValueError:
+        return False
