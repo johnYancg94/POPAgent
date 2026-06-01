@@ -65,5 +65,18 @@ def shutdown_main_thread() -> None:
             break
 
 
+def start_main_thread() -> None:
+    """Call from addon register() to (re)start the drain timer.
+
+    Import-time _start_timer() only fires on the FIRST import. After a
+    disable→enable cycle the module stays cached, so the import-time start does
+    not re-run — but unregister() called shutdown_main_thread() and killed the
+    timer. Without an explicit restart the drain queue would be dead and every
+    ui_read/ui_write from the agent loop would hang forever. register() must
+    call this to re-arm the timer symmetrically with shutdown_main_thread().
+    """
+    _start_timer()
+
+
 # Start the timer as soon as this module is imported (addon registration).
 _start_timer()

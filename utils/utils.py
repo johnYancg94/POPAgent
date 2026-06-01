@@ -22,6 +22,15 @@ import itertools
 from bpy.types import Context
 from .. import __package__ as base_package
 from .markdown_renderer import parse_markdown_blocks
+from ..agent_core.ui_bridge import ui_write, ui_call
+
+
+def _redraw_area(area) -> None:
+    try:
+        if area is not None:
+            area.tag_redraw()
+    except Exception:
+        pass
 
 
 def parse_llm_content(answer: str) -> list:
@@ -350,15 +359,17 @@ async def print_waiting_string(
     if icon_set == "CONNECTING":
         icons = ["PROP_OFF", "PROP_CON", "PROP_ON"]
 
+    # Loop condition reads props directly (reads are tolerated off the main
+    # thread); writes + redraw are marshalled. Runs on the background loop.
+    area = getattr(context, "area", None)
     while props.is_connecting:
         for iteration in range(1, len(icons) + 1):
-            props.waiting_string = text + iteration * suffix
-            props.waiting_icon = icons[iteration - 1]
-            try:
-                # it sometimes doesn't exist when view3D isn't current area
-                context.area.tag_redraw()
-            except Exception as e:
-                pass
+            ui_write(
+                props,
+                waiting_string=text + iteration * suffix,
+                waiting_icon=icons[iteration - 1],
+            )
+            ui_call(_redraw_area, area)
             await asyncio.sleep(interval)
     return
 
@@ -370,15 +381,15 @@ async def print_answering_string(context: Context):
     text: str = "Answering"
     suffix: str = "."
     icons: list = ["ALIGN_TOP", "ALIGN_MIDDLE", "ALIGN_BOTTOM"]
+    area = getattr(context, "area", None)
     while props.is_streaming or props.waiting_for_answer:
         for iteration in range(1, len(icons) + 1):
-            props.answering_string = text + iteration * suffix
-            props.answering_icon = icons[iteration - 1]
-            try:
-                # it sometimes doesn't exist when view3D isn't current area
-                context.area.tag_redraw()
-            except Exception as e:
-                pass
+            ui_write(
+                props,
+                answering_string=text + iteration * suffix,
+                answering_icon=icons[iteration - 1],
+            )
+            ui_call(_redraw_area, area)
             await asyncio.sleep(interval)
     return
 

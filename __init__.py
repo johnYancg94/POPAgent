@@ -3,10 +3,11 @@ import bpy
 import os
 
 from .utils import cc_globals
-from .utils.async_loop import AsyncLoopModalOperator, setup_asyncio_executor
+from .utils.async_loop import setup_asyncio_executor
 from .utils.dependencies import Dependencies
 from . import translations
-from .agent_core.main_thread import shutdown_main_thread
+from .agent_core.main_thread import shutdown_main_thread, start_main_thread
+from .agent_core import async_runtime as _async_runtime
 from .agent_core import skill_registry as _skill_registry
 from .agent_core.confirm_dialog import POPAGENT_OT_confirm_skill, clear_session_trust
 from .agent_core.reverse_pull import pull_already_loaded_agent_skills
@@ -102,7 +103,6 @@ bl_info = {
 }
 
 classes = (
-    AsyncLoopModalOperator,
     ChatCompanionPreferences,
     ChatCompanionProperties,
     CHAT_COMPANION_PT_prompt,
@@ -218,6 +218,10 @@ def register():
     cc_globals.preview_collections["main"] = pcoll
 
     setup_asyncio_executor()
+    # Re-arm the main-thread drain timer. Symmetric with shutdown_main_thread()
+    # in unregister(); required because the module stays cached across
+    # disable→enable, so import-time _start_timer() does not re-run.
+    start_main_thread()
 
     # 注册中文翻译（必须在类注册之前）
     try:
@@ -286,6 +290,10 @@ def unregister():
     except ValueError:
         pass
 
+    # Stop the agent's background event loop first: cancel any in-flight
+    # coroutines (which may be awaiting run_on_main futures) before the drain
+    # queue is torn down, so nothing hangs and we avoid "Event loop is closed".
+    _async_runtime.shutdown()
     shutdown_main_thread()
     _skill_registry.clear_all()
     _builtin_skills.unregister()

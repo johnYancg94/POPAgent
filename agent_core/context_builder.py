@@ -111,9 +111,8 @@ def _distinct_owners() -> list[str]:
 
 async def build_scene_summary() -> str:
     """Return a ≤200-token summary string. Safe to call from worker coroutines."""
-    loop = asyncio.get_event_loop()
     future = run_on_main(_collect_scene_snapshot)
-    snap = await loop.run_in_executor(None, lambda: future.result(timeout=5))
+    snap = await asyncio.wait_for(asyncio.wrap_future(future), timeout=5)
     owners = _distinct_owners()
     return _format_snapshot(snap, owners)
 

@@ -12,6 +12,29 @@ import bpy
 import traceback
 
 
+def _diagnose_hint(exc: Exception) -> str:
+    """Map a raised exception to a recovery hint that steers the agent away
+    from re-submitting the same failing code."""
+    name = type(exc).__name__
+    if name == "AttributeError":
+        return (
+            "很可能是 Blender API 的属性/方法名写错，或该名称在当前版本不存在。"
+            "不要原样重跑同一段代码——先调用 blender.api_search 确认本版本下正确的"
+            "属性/方法名，再据此改写。"
+        )
+    if name == "NameError":
+        return (
+            "用到了未定义的变量或未 import 的名字。检查拼写、补上 import，"
+            "不要重复提交同一段代码。"
+        )
+    if name in ("TypeError", "ValueError"):
+        return (
+            "参数类型或取值不对。不要原样重投同一段代码；检查传入参数，"
+            "必要时用 blender.api_search 查正确的签名。"
+        )
+    return ""
+
+
 def _handler_run_python(context=None, code: str = "") -> dict:
     """Execute a Python code string in Blender's main thread.
 
@@ -38,7 +61,14 @@ def _handler_run_python(context=None, code: str = "") -> dict:
         return {"ok": True, "output": output}
     except Exception as exc:
         tb = traceback.format_exc()
-        return {"ok": False, "error_kind": "exec_error", "error": tb}
+        captured = stdout_capture.getvalue()
+        err = {"ok": False, "error_kind": "exec_error", "error": tb}
+        if captured:
+            err["output"] = captured
+        hint = _diagnose_hint(exc)
+        if hint:
+            err["hint"] = hint
+        return err
     finally:
         sys.stdout = old_stdout
 

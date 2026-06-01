@@ -19,6 +19,7 @@ import asyncio
 import json
 import time
 import os
+import threading
 import traceback
 from asyncio import Future
 from bpy.props import StringProperty, BoolProperty
@@ -42,6 +43,7 @@ from ..properties.addon_preferences import ChatCompanionPreferences
 from ..properties.property_updates import PropertyUpdates
 from .. import __package__ as base_package
 from ..agent_core import skill_registry, executor
+from ..agent_core.ui_bridge import ui_write, ui_call, ui_read
 from ..agent_core.message_builder import MessageBuilder, ToolCall, history_context_items
 from ..agent_core.context_builder import build_scene_summary
 from ..agent_core.vision_inputs import collect_enabled_image_payloads
@@ -58,7 +60,14 @@ from ..agent_core.execution_trace import (
     record_iteration,
     record_tool_call,
 )
-from ..agent_core.agent_policy import choose_max_iters, normalized_tool_signature
+from ..agent_core.agent_policy import (
+    choose_max_iters,
+    normalized_tool_signature,
+    repeat_intervention,
+    repeat_warning_text,
+    is_parallel_safe,
+    plan_tool_groups,
+)
 from ..providers import OpenAICompatProvider, AnthropicProvider
 
 
@@ -149,45 +158,125 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
             base_package
         ].preferences
 
-        # force update llm details
-        # (they usually only get updated when changing llm orga or model)
-        PropertyUpdates.update_llm_details(self, context)
+        # Main-thread setup: update_llm_details writes props (api_url/headers/
+        # payload) and the code-completion branch writes prefs — all bpy writes,
+        # so run them on the main thread up front and wait for the result before
+        # reading the derived config below.
+        try:
+            api_key_go = await ui_read(self._main_thread_setup, context)
+        except Exception as exc:
+            ui_call(self.report, {"WARNING"}, f"Setup failed: {exc}")
+            self.quit()
+            return
 
-        # check if api key and the userpromt
-        # are not none and if it is not an empty string
-        api_key_go: bool = props.api_key is not None and props.api_key
         user_prompt_go: bool = self.user_prompt is not None and self.user_prompt
 
         if not api_key_go and not user_prompt_go:
-            self.report(
+            ui_call(
+                self.report,
                 {"WARNING"},
                 "No API key and no prompt to answer. Enter your API key in the addons preferences and enter a prompt into the text field.",
             )
             self.quit()
             return
         elif not api_key_go and user_prompt_go:
-            self.report(
+            ui_call(
+                self.report,
                 {"WARNING"},
                 "No API key. Did you enter your API key in the addons preferences?",
             )
             self.quit()
             return
         elif not user_prompt_go and api_key_go:
-            self.report({"WARNING"}, "No prompt entered.")
+            ui_call(self.report, {"WARNING"}, "No prompt entered.")
             self.quit()
             return
 
         # set prompt when the operator was called directly
         # and not via text field
-        props.user_prompt = self.user_prompt
+        # Reset all live-mutated UI props in one marshalled batch. async_execute
+        # runs on the background loop now, so every bpy write must go through
+        # ui_write (fire-and-forget, ordered by the main-thread drain queue).
+        ui_write(
+            props,
+            user_prompt=self.user_prompt,
+            waiting_for_answer=True,
+            is_connecting=True,
+            # workaround: clear old answer so it isn't shown briefly before the
+            # UI updates to the new answer.
+            answer="",
+            answer_parts="",
+            expanded_answer_code_indices="",
+            waiting_string="",
+            waiting_icon="BLANK1",
+            error_button_icon="",
+            error_button_text="",
+            error_button_content="",
+            error_button_url="",
+            error_title="",
+            error_info="",
+            error_message="",
+        )
+        cc_globals.request_failed = False
+        self._usage_recorded = False
+        self._active_trace = None
+        self._request_started_at = time.perf_counter()
+        self._turn_cost = {
+            "input_tokens": 0,
+            "output_tokens": 0,
+            "total_tokens": 0,
+            "latency_ms": 0,
+        }
 
-        # setting answering status to waiting
+        ui_call(self.report, {"INFO"}, "Your prompt was sent. Generating answer...")
+
+        # async code to run for api call
+        coroutines = [
+            self.query_api(context),
+            print_answering_string(context),
+            print_waiting_string(context, icon_set="CONNECTING", text="Connecting"),
+        ]
+        # ! query
+        try:
+            async_return: Future = await asyncio.gather(*coroutines)
+        except asyncio.CancelledError:
+            ui_write(
+                props,
+                waiting_for_answer=False,
+                is_connecting=False,
+                is_streaming=False,
+                waiting_string="Cancelled",
+                waiting_icon="CANCEL",
+            )
+            ui_call(self.report, {"INFO"}, "POPAgent request cancelled.")
+            self.quit()
+            return
+
+        # update view_3d (where addon is located in (context))
+        ui_call(self._redraw_area, getattr(context, "area", None))
+
+        ui_call(self.report, {"INFO"}, "POPAgent answered.")
+        self.quit()
+
+    def _main_thread_setup(self, context) -> bool:
+        """Main-thread bpy setup for a turn. Returns whether an API key is set.
+
+        Runs update_llm_details (writes derived config props), resets the live
+        UI props, and applies the code-completion streaming override. Must run on
+        the main thread (all bpy writes).
+        """
+        props = context.scene.chat_companion_properties
+        prefs = context.preferences.addons[base_package].preferences
+
+        # force update llm details
+        # (they usually only get updated when changing llm orga or model)
+        PropertyUpdates.update_llm_details(self, context)
+
+        props.user_prompt = self.user_prompt
         props.waiting_for_answer = True
         props.is_connecting = True
-
-        # * workaround
-        # setting to empty strings so the old answer isn't displayed
-        # for a brief moment before the ui updates to display new answer
+        # workaround: clear old answer so it isn't shown briefly before the UI
+        # updates to the new answer.
         props.answer = ""
         props.answer_parts = ""
         props.expanded_answer_code_indices = ""
@@ -200,54 +289,28 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         props.error_title = ""
         props.error_info = ""
         props.error_message = ""
-        cc_globals.request_failed = False
-        self._usage_recorded = False
-        self._active_trace = None
-        self._request_started_at = time.perf_counter()
-        self._turn_cost = {
-            "input_tokens": 0,
-            "output_tokens": 0,
-            "total_tokens": 0,
-            "latency_ms": 0,
-        }
 
         # if it is code completion, don't use streaming
         if self.is_code_completion:
             self.was_streaming = self.use_streaming
             self.use_streaming = False
-            # this will trigger LLM updates, since some LLMs have different urls, payloads, ... for streaming/non-streaming
+            # triggers LLM updates: some LLMs have different urls/payloads for
+            # streaming vs non-streaming.
             prefs.use_streaming = False
 
-        self.report({"INFO"}, "Your prompt was sent. Generating answer...")
+        return bool(props.api_key)
 
-        # async code to run for api call
-        coroutines = [
-            self.query_api(context),
-            print_answering_string(context),
-            print_waiting_string(context, icon_set="CONNECTING", text="Connecting"),
-        ]
-        # ! query
+    @staticmethod
+    def _redraw_area(area) -> None:
         try:
-            async_return: Future = await asyncio.gather(*coroutines)
-        except asyncio.CancelledError:
-            props.waiting_for_answer = False
-            props.is_connecting = False
-            props.is_streaming = False
-            props.waiting_string = "Cancelled"
-            props.waiting_icon = "CANCEL"
-            self.report({"INFO"}, "POPAgent request cancelled.")
-            self.quit()
-            return
-
-        # update view_3d (where addon is located in (context))
-        try:
-            # it sometimes doesn't exist when view3D isn't current area
-            context.area.tag_redraw()
-        except Exception as e:
+            if area is not None:
+                area.tag_redraw()
+        except Exception:
             pass
 
-        self.report({"INFO"}, "POPAgent answered.")
-        self.quit()
+    @staticmethod
+    def _on_main_thread() -> bool:
+        return threading.current_thread() is threading.main_thread()
 
     async def query_api(self, context: Context):
         props: ChatCompanionProperties = context.scene.chat_companion_properties
@@ -336,14 +399,14 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
 
                 # ! streaming
                 if self.use_streaming:
-                    props.is_streaming = True
+                    ui_write(props, is_streaming=True)
                     if prefs.llm_organization in {"openai", "mimo", "deepseek"}:
                         payload["stream_options"] = {"include_usage": True}
                     print(
                         f"Sending streaming request:\n{props.api_url = }\n{props.api_headers}"
                     )
                     started_at = time.perf_counter()
-                    status_code, raw_usage = await self._stream_with_retries(
+                    status_code, raw_usage, answer_content = await self._stream_with_retries(
                         context,
                         client,
                         url=props.api_url,
@@ -363,25 +426,21 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                         status_code=status_code,
                     )
 
-                    if props.answer == "":
+                    # Use the assembled content returned by the stream, not a
+                    # read-back of props.answer (those writes are fire-and-forget
+                    # and may still be queued).
+                    if answer_content == "":
                         self.show_general_error(
                             context=context,
                             title="No Answer",
                             solution="There was no answer sent. Please try again or use another model.",
                         )
                     else:
-                        # ! add to history
-                        bpy.ops.chat_companion.add_history_item(
-                            display_name=self.user_prompt,
-                            prompt=self.user_prompt,
-                            answer=props.answer,
-                            parts=props.answer_parts,
-                            is_favorite=False,
-                        )
+                        # ! add to history (main thread)
+                        ui_call(self._append_history_stream, answer_content)
 
                     # setting answering status
-                    props.waiting_for_answer = False
-                    props.is_streaming = False
+                    ui_write(props, waiting_for_answer=False, is_streaming=False)
 
                     return None
 
@@ -497,13 +556,20 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                 solution="There was an error in the addon, please report this error.",
             )
         finally:
-            # setting answering status
-            props.waiting_for_answer = False
-            props.is_connecting = False
-            props.is_streaming = False
-            # reset to stream if it was a code completion and stream was selected before
-            if self.was_streaming:
-                prefs.use_streaming = True
+            # setting answering status (marshalled; reset stream override too)
+            ui_call(self._reset_status_flags, bool(self.was_streaming))
+
+    def _reset_status_flags(self, restore_streaming: bool) -> None:
+        import bpy
+        ctx = bpy.context
+        props = ctx.scene.chat_companion_properties
+        props.waiting_for_answer = False
+        props.is_connecting = False
+        props.is_streaming = False
+        # reset to stream if it was a code completion and stream was selected before
+        if restore_streaming:
+            prefs = ctx.preferences.addons[base_package].preferences
+            prefs.use_streaming = True
 
     async def handle_stream_chunk(self, context: Context, response):
         props: ChatCompanionProperties = context.scene.chat_companion_properties
@@ -513,10 +579,14 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
 
         new_content = ""
         raw_usage = {}
+        area = getattr(context, "area", None)
+        connected = False
 
         async for chunk in response.aiter_lines():
-            # connected
-            props.is_connecting = False
+            # connected — clear the connecting flag once on the first chunk.
+            if not connected:
+                ui_write(props, is_connecting=False)
+                connected = True
 
             if not chunk:
                 continue
@@ -554,16 +624,9 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
             # max length
             if root.get(props.res_schema_finish_reason, "") == "length":
                 new_content += "\n\nThe model has reached its maximum context length (its maximum tokens/characters)! Please switch to an AI model with a higher context length (in the addons preferences) or reduce your prompt attachments."
-                props.answer = new_content
                 new_parts = parse_llm_content(new_content)
-                props.answer_parts = json.dumps(new_parts)
-                try:
-                    # TODO has to work when switching context
-                    # it sometimes doesn't exist
-                    # when view3D isn't current area
-                    context.area.tag_redraw()
-                except Exception as e:
-                    pass
+                ui_write(props, answer=new_content, answer_parts=json.dumps(new_parts))
+                ui_call(self._redraw_area, area)
                 break
 
             # content
@@ -572,14 +635,12 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                 content_delta = delta.get(props.req_schema_parts)
                 if isinstance(content_delta, str) and content_delta:
                     new_content += content_delta
-                    props.answer = new_content
                     new_parts = parse_llm_content(new_content)
-                    props.answer_parts = json.dumps(new_parts)
-                try:
-                    context.area.tag_redraw()
-                except Exception as e:
-                    pass
-        return raw_usage
+                    # Fire-and-forget: live deltas are ordered by the drain queue;
+                    # awaiting each would add a main-thread round-trip per token.
+                    ui_write(props, answer=new_content, answer_parts=json.dumps(new_parts))
+                ui_call(self._redraw_area, area)
+        return raw_usage, new_content
 
     async def _plain_query(self, context, client, payload, props, prefs):
         """Original non-streaming single-turn chat path."""
@@ -600,12 +661,12 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         try:
             response = response.json()
         except json.JSONDecodeError:
-            self.report({"WARNING"}, "Could not read response from server.")
+            ui_call(self.report, {"WARNING"}, "Could not read response from server.")
             self.quit()
             return
 
         if response is None:
-            self.report({"WARNING"}, "The response returned nothing.")
+            ui_call(self.report, {"WARNING"}, "The response returned nothing.")
             self.quit()
             return
 
@@ -621,7 +682,7 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
 
         root = response.get(props.res_schema_root)
         if not root:
-            self.report({"WARNING"}, "Could not get root from response.")
+            ui_call(self.report, {"WARNING"}, "Could not get root from response.")
             self.quit()
             return
         if isinstance(root, list):
@@ -631,18 +692,30 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         if isinstance(content, list):
             content = content[0]
         if not content:
-            self.report({"WARNING"}, "Could not get content from response.")
+            ui_call(self.report, {"WARNING"}, "Could not get content from response.")
             self.quit()
             return
 
         parts = content.get(props.req_schema_parts)
         if not parts:
-            self.report({"WARNING"}, "Could not get parts from response.")
+            ui_call(self.report, {"WARNING"}, "Could not get parts from response.")
             self.quit()
             return
 
-        props.answer = parts
         answer_parts = parse_llm_content(parts)
+        was_code_completion = bool(self.is_code_completion)
+        self.is_code_completion = False
+        # Single main-thread finalize: write answer, append history, reset flags
+        # and report — in order, as one drain-queue task.
+        ui_call(
+            self._finalize_plain, getattr(context, "area", None),
+            parts, answer_parts, was_code_completion,
+        )
+
+    def _finalize_plain(self, area, parts, answer_parts, was_code_completion) -> None:
+        import bpy
+        props = bpy.context.scene.chat_companion_properties
+        props.answer = parts
         props.answer_parts = json.dumps(answer_parts)
 
         bpy.ops.chat_companion.add_history_item(
@@ -658,15 +731,15 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
 
         report_icon = "INFO"
         report_message = "Answer generated."
-        if self.is_code_completion:
+        if was_code_completion:
             props.update_code_completion = True
-            self.is_code_completion = False
             if props.code_completion_text_not_found:
                 props.code_completion_text_not_found = False
                 report_icon = "WARNING"
                 report_message = "Could not paste code for completion."
 
         self.report({report_icon}, report_message)
+        self._redraw_area(area)
 
     async def _agent_query(self, context, client):
         """Tool-calling agent loop (max_iters iterations)."""
@@ -674,7 +747,6 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         prefs: ChatCompanionPreferences = context.preferences.addons[
             base_package
         ].preferences
-        history: bpy_prop_collection = context.scene.chat_companion_history
 
         org = prefs.llm_organization
         if org == "openai":
@@ -745,8 +817,9 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
             configured_max=getattr(prefs, "agent_max_iters", 10),
         )
         max_history_context = getattr(prefs, "max_history_context", 5)
-        # Anti-loop: track last 3 (skill, args_hash) pairs.
+        # Anti-loop: track recent (skill, args_hash) pairs; graduated response.
         recent_calls: list[tuple[str, str]] = []
+        warned_sigs: set[tuple[str, str]] = set()
         trace = create_trace()
         self._active_trace = trace
 
@@ -756,8 +829,12 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
             provider.supports_streaming_with_tools()
         user_images = []
         if include_image_results:
-            user_images = collect_enabled_image_payloads(
-                context.scene.chat_companion_image_attachments
+            # Snapshot the image-attachment collection on the main thread: it is
+            # a bpy collection and iterating it off-thread races with edits.
+            user_images = await ui_read(
+                lambda: collect_enabled_image_payloads(
+                    bpy.context.scene.chat_companion_image_attachments
+                )
             )
         if include_image_results:
             system_text += (
@@ -795,20 +872,27 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
             "when the dedicated node skills cannot express the requested operation."
         )
 
-        mb = MessageBuilder.from_history(history, max_items=max_history_context)
-        # Collect enabled text attachments and append to user prompt
-        text_attachments = context.scene.chat_companion_attachments
-        attachments_string = ""
-        for attachment in text_attachments:
-            if attachment.is_enabled:
-                try:
-                    attachments_string += "\n" + json.loads(attachment.text) + "\n"
-                except (json.JSONDecodeError, TypeError):
-                    attachments_string += "\n" + attachment.text + "\n"
-        prompt_with_attachments = self.user_prompt + attachments_string
-        mb.append_user(prompt_with_attachments, images=user_images)
+        # Snapshot history + text attachments on the main thread into a plain
+        # MessageBuilder + string; bpy collections must not be iterated on the
+        # background loop.
+        def _snapshot_messages() -> "MessageBuilder":
+            ctx = bpy.context
+            builder = MessageBuilder.from_history(
+                ctx.scene.chat_companion_history, max_items=max_history_context
+            )
+            attach_str = ""
+            for attachment in ctx.scene.chat_companion_attachments:
+                if attachment.is_enabled:
+                    try:
+                        attach_str += "\n" + json.loads(attachment.text) + "\n"
+                    except (json.JSONDecodeError, TypeError):
+                        attach_str += "\n" + attachment.text + "\n"
+            builder.append_user(self.user_prompt + attach_str, images=user_images)
+            return builder
 
-        props.is_connecting = False
+        mb = await ui_read(_snapshot_messages)
+
+        ui_write(props, is_connecting=False)
 
         for iteration in range(max_iters):
             # Build provider-specific wire payload.
@@ -901,24 +985,70 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                     reasoning_content=getattr(llm_resp, "reasoning_content", ""),
                 )
 
-                # 2. Execute each tool and record results.
-                for tc in llm_resp.tool_calls:
-                    # Anti-deadloop check.
+                # 2. Anti-loop budget + parallel planning, computed up front for
+                #    ALL calls in this turn before any execution, so an abort
+                #    fires before we run anything.
+                tcs = llm_resp.tool_calls
+                sigs = []
+                actions = []
+                for tc in tcs:
                     sig = normalized_tool_signature(tc.name, tc.arguments)
                     recent_calls.append(sig)
-                    repeated = sum(1 for s in recent_calls[-6:] if s == sig)
-                    if repeated >= 3:
-                        final_text = (
-                            f"检测到工具 `{tc.name}` 被反复以相同参数调用（≥3次），已中止循环。"
-                            "请换一种方式或直接告诉我需要什么帮助。"
-                        )
-                        mb.append_assistant(final_text)
-                        record_abort(trace, "anti_loop")
-                        self._finish_agent(context, props, prefs, mb, final_text, trace)
-                        return
+                    sigs.append(sig)
+                    actions.append(repeat_intervention(recent_calls, sig))
 
-                    tool_started_at = time.perf_counter()
+                abort_idx = next(
+                    (i for i, a in enumerate(actions) if a == "abort"), None
+                )
+                if abort_idx is not None:
+                    bad = tcs[abort_idx]
+                    final_text = (
+                        f"检测到工具 `{bad.name}` 被反复以相同参数调用（≥3次），已中止循环。"
+                        "请换一种方式或直接告诉我需要什么帮助。"
+                    )
+                    mb.append_assistant(final_text)
+                    record_abort(trace, "anti_loop")
+                    self._finish_agent(context, props, prefs, mb, final_text, trace)
+                    return
+
+                # Classify each call's parallel safety from its skill metadata.
+                parallel_flags = []
+                for tc in tcs:
+                    skill = skill_registry.get_skill_by_name(tc.name)
+                    level = skill_registry.get_permission_level(skill) if skill else ""
+                    meta = (skill.get("metadata", {}) if skill else {}) or {}
+                    parallel_flags.append(is_parallel_safe(level, meta))
+                groups = plan_tool_groups(parallel_flags)
+
+                # Results keyed by original index so wire order is preserved
+                # regardless of completion order within a parallel group.
+                results: dict[int, tuple] = {}
+
+                async def _run_one(idx: int) -> tuple:
+                    tc = tcs[idx]
+                    started = time.perf_counter()
                     result = await executor.run(tc, context)
+                    if actions[idx] == "warn" and sigs[idx] not in warned_sigs:
+                        warned_sigs.add(sigs[idx])
+                        if isinstance(result, dict):
+                            result = dict(result)
+                            result["loop_warning"] = repeat_warning_text(tc.name)
+                    return result, (time.perf_counter() - started) * 1000
+
+                for group in groups:
+                    if len(group) == 1:
+                        results[group[0]] = await _run_one(group[0])
+                    else:
+                        # Concurrent read-only/compute calls on the bg loop.
+                        gathered = await asyncio.gather(
+                            *(_run_one(i) for i in group)
+                        )
+                        for i, res in zip(group, gathered):
+                            results[i] = res
+
+                # 3. Append results + record trace in original index order.
+                for idx, tc in enumerate(tcs):
+                    result, duration_ms = results[idx]
                     mb.append_tool_result(tc.id, tc.name, result)
                     record_tool_call(
                         trace,
@@ -926,7 +1056,7 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                         name=tc.name,
                         arguments=tc.arguments,
                         result=result,
-                        duration_ms=(time.perf_counter() - tool_started_at) * 1000,
+                        duration_ms=duration_ms,
                     )
 
                 # Continue loop for next LLM turn.
@@ -950,14 +1080,14 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         text deltas live to props.answer, return the assembled LLMResponse.
 
         Returns None on error (caller should bail out)."""
-        props.is_streaming = True
+        ui_write(props, is_streaming=True)
         self._set_model_thinking(context, props)
+        area = getattr(context, "area", None)
 
         async def operation():
             parser = provider.create_stream_parser()
             running_text = ""
-            props.answer = ""
-            props.answer_parts = json.dumps([])
+            ui_write(props, answer="", answer_parts=json.dumps([]))
             async with client.stream(
                 "POST", url=url, headers=headers, json=body,
                 timeout=build_httpx_timeout(prefs.timeout),
@@ -972,31 +1102,29 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                     for ev in events:
                         if ev.kind == "text":
                             running_text += ev.payload
-                            props.answer = running_text
                             try:
                                 parts = parse_llm_content(running_text)
-                                props.answer_parts = json.dumps(parts)
+                                ui_write(
+                                    props,
+                                    answer=running_text,
+                                    answer_parts=json.dumps(parts),
+                                )
                             except Exception:
-                                pass
-                            try:
-                                if context.area is not None:
-                                    context.area.tag_redraw()
-                            except Exception:
-                                pass
+                                ui_write(props, answer=running_text)
+                            ui_call(self._redraw_area, area)
                         # tool_call / done events handled at finalize().
             return parser.finalize()
 
         def on_retry(attempt, attempts, exc, delay):
-            props.waiting_string = (
-                f"Retrying stream {attempt + 1}/{attempts} "
-                f"after {type(exc).__name__}"
+            ui_write(
+                props,
+                waiting_string=(
+                    f"Retrying stream {attempt + 1}/{attempts} "
+                    f"after {type(exc).__name__}"
+                ),
+                waiting_icon="FILE_REFRESH",
             )
-            props.waiting_icon = "FILE_REFRESH"
-            try:
-                if context.area is not None:
-                    context.area.tag_redraw()
-            except Exception:
-                pass
+            ui_call(self._redraw_area, area)
 
         try:
             return await run_with_retries(
@@ -1011,11 +1139,12 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
             self.show_general_error(context, solution=f"Streaming failed: {exc}")
             return None
         finally:
-            props.is_streaming = False
+            ui_write(props, is_streaming=False)
 
     async def _post_with_retries(self, context, client, *, url, headers, body, timeout):
         props: ChatCompanionProperties = context.scene.chat_companion_properties
         self._set_model_thinking(context, props)
+        area = getattr(context, "area", None)
 
         async def operation():
             response = await client.post(
@@ -1028,16 +1157,15 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
             return response
 
         def on_retry(attempt, attempts, exc, delay):
-            props.waiting_string = (
-                f"Retrying request {attempt + 1}/{attempts} "
-                f"after {type(exc).__name__}"
+            ui_write(
+                props,
+                waiting_string=(
+                    f"Retrying request {attempt + 1}/{attempts} "
+                    f"after {type(exc).__name__}"
+                ),
+                waiting_icon="FILE_REFRESH",
             )
-            props.waiting_icon = "FILE_REFRESH"
-            try:
-                if context.area is not None:
-                    context.area.tag_redraw()
-            except Exception:
-                pass
+            ui_call(self._redraw_area, area)
 
         return await run_with_retries(
             operation,
@@ -1048,10 +1176,10 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
     async def _stream_with_retries(self, context, client, *, url, headers, body, timeout):
         props: ChatCompanionProperties = context.scene.chat_companion_properties
         self._set_model_thinking(context, props)
+        area = getattr(context, "area", None)
 
         async def operation():
-            props.answer = ""
-            props.answer_parts = json.dumps([])
+            ui_write(props, answer="", answer_parts=json.dumps([]))
             async with client.stream(
                 "POST",
                 url=url,
@@ -1060,20 +1188,19 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                 timeout=build_httpx_timeout(timeout),
             ) as response:
                 response.raise_for_status()
-                raw_usage = await self.handle_stream_chunk(context, response)
-                return response.status_code, raw_usage
+                raw_usage, content = await self.handle_stream_chunk(context, response)
+                return response.status_code, raw_usage, content
 
         def on_retry(attempt, attempts, exc, delay):
-            props.waiting_string = (
-                f"Retrying stream {attempt + 1}/{attempts} "
-                f"after {type(exc).__name__}"
+            ui_write(
+                props,
+                waiting_string=(
+                    f"Retrying stream {attempt + 1}/{attempts} "
+                    f"after {type(exc).__name__}"
+                ),
+                waiting_icon="FILE_REFRESH",
             )
-            props.waiting_icon = "FILE_REFRESH"
-            try:
-                if context.area is not None:
-                    context.area.tag_redraw()
-            except Exception:
-                pass
+            ui_call(self._redraw_area, area)
 
         return await run_with_retries(
             operation,
@@ -1082,16 +1209,29 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         )
 
     def _set_model_thinking(self, context, props) -> None:
-        props.waiting_string = "Model is thinking..."
-        props.waiting_icon = "SORTTIME"
-        try:
-            if context.area is not None:
-                context.area.tag_redraw()
-        except Exception:
-            pass
+        ui_write(props, waiting_string="Model is thinking...", waiting_icon="SORTTIME")
+        ui_call(self._redraw_area, getattr(context, "area", None))
+
+    def _append_history_stream(self, answer_content: str) -> None:
+        """Main-thread: append a streamed answer to history."""
+        import bpy
+        props = bpy.context.scene.chat_companion_properties
+        bpy.ops.chat_companion.add_history_item(
+            display_name=self.user_prompt,
+            prompt=self.user_prompt,
+            answer=answer_content,
+            parts=props.answer_parts,
+            is_favorite=False,
+        )
 
     def _record_usage(self, context, prefs, raw_usage, **kwargs) -> None:
-        add_usage_record(context, prefs, raw_usage, **kwargs)
+        # add_usage_record mutates a bpy collection (collection.add() + item.*=),
+        # so marshal it to the main thread. The _turn_cost accumulation below is
+        # pure Python and stays inline on whichever thread we're on.
+        if self._on_main_thread():
+            add_usage_record(context, prefs, raw_usage, **kwargs)
+        else:
+            ui_call(self._record_usage_main, raw_usage, dict(kwargs))
         if kwargs.get("is_error") or bool(raw_usage):
             self._usage_recorded = True
         turn = getattr(self, "_turn_cost", None)
@@ -1104,6 +1244,11 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
             )
             turn["total_tokens"] += int(raw_usage.get("total_tokens") or 0)
             turn["latency_ms"] += max(0, int(kwargs.get("latency_ms", 0) or 0))
+
+    def _record_usage_main(self, raw_usage, kwargs) -> None:
+        ctx = bpy.context
+        prefs = ctx.preferences.addons[base_package].preferences
+        add_usage_record(ctx, prefs, raw_usage, **kwargs)
 
     def _record_error_usage_once(
         self,
@@ -1143,7 +1288,17 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
 
     def _finish_agent(self, context, props, prefs, mb, final_text: str,
                       trace: dict | None = None):
-        """Write final answer to props and history."""
+        """Finalize an agent turn. Called from the background loop; runs the
+        bpy-touching finalize (answer write, history append, usage log) on the
+        main thread as one ordered drain-queue task."""
+        ui_call(self._finalize_agent, final_text, trace)
+
+    def _finalize_agent(self, final_text: str, trace: dict | None) -> None:
+        import bpy
+        ctx = bpy.context
+        props = ctx.scene.chat_companion_properties
+        prefs = ctx.preferences.addons[base_package].preferences
+
         answer_parts = parse_llm_content(final_text)
         props.answer = final_text
         props.answer_parts = json.dumps(answer_parts)
@@ -1164,7 +1319,7 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         props.waiting_for_answer = False
         props.is_connecting = False
         self.report({"INFO"}, "Agent finished.")
-        self._write_usage_log(context, prefs, trace)
+        self._write_usage_log(ctx, prefs, trace)
 
     def _write_usage_log(self, context, prefs, trace) -> None:
         """Append one JSONL line for this turn. Never breaks the turn on error."""
@@ -1174,6 +1329,7 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         if not isinstance(trace, dict):
             return
         try:
+            import uuid
             from ..agent_core import usage_log
 
             user_id = getattr(prefs, "trace_log_user_id", "") or ""
@@ -1185,7 +1341,9 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                     pass
 
             include_full = bool(getattr(prefs, "trace_log_full", False))
+            episode_id = uuid.uuid4().hex
             episode = usage_log.build_episode(
+                episode_id=episode_id,
                 trace=trace,
                 user_id=user_id,
                 env={
@@ -1205,11 +1363,32 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                 meta_lookup=_skill_meta_lookup,
             )
             log_dir = getattr(prefs, "trace_log_dir", "") or _default_log_dir()
-            usage_log.append_episode(log_dir, episode)
+            log_path = usage_log.append_episode(log_dir, episode)
+            self._link_episode_to_history(context, episode_id, log_path)
         except Exception as exc:
             print(f"[agent] usage log write failed: {exc}")
 
+    def _link_episode_to_history(self, context, episode_id: str, log_path: str) -> None:
+        """Stamp the just-written episode id/path onto this turn's history item.
+
+        _finish_agent adds the history item first (moved to index 0,
+        selected_history_item == 0), then calls _write_usage_log, so the newest
+        item is at key "0". The thumbs up/down buttons read these back to rewrite
+        the on-disk episode line.
+        """
+        try:
+            history = context.scene.chat_companion_history
+            item = history.get("0")
+            if item is not None:
+                item.episode_id = episode_id
+                item.episode_log_path = log_path
+        except Exception as exc:
+            print(f"[agent] linking episode to history failed: {exc}")
+
     def show_connection_error(self, context, error):
+        if not self._on_main_thread():
+            ui_call(self.show_connection_error, context, error)
+            return
 
         chat_properties: ChatCompanionProperties = (
             context.scene.chat_companion_properties
@@ -1274,6 +1453,9 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         self.quit()
 
     def show_open_ai_error(self, context, error, response, solution):
+        if not self._on_main_thread():
+            ui_call(self.show_open_ai_error, context, error, response, solution)
+            return
 
         chat_properties: ChatCompanionProperties = (
             context.scene.chat_companion_properties
@@ -1345,6 +1527,9 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         self.quit()
 
     def show_request_error(self, context, error, response, solution):
+        if not self._on_main_thread():
+            ui_call(self.show_request_error, context, error, response, solution)
+            return
 
         chat_properties: ChatCompanionProperties = (
             context.scene.chat_companion_properties
@@ -1416,6 +1601,9 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         self.quit()
 
     def show_general_error(self, context, solution, error=None, title="Error"):
+        if not self._on_main_thread():
+            ui_call(self.show_general_error, context, solution, error, title)
+            return
 
         chat_properties: ChatCompanionProperties = (
             context.scene.chat_companion_properties

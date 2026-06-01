@@ -26,6 +26,20 @@ from ..providers.base import ToolCallRaw
 _RESULT_OK = "ok"
 _RESULT_ERR = "error"
 
+# Default grace window for a skill handler running on the main thread. Skills
+# whose metadata sets long_running=True get a much larger window, because a
+# bake / heavy modifier apply legitimately takes longer — and timing it out
+# would not stop the work anyway (see _make_error "still_running" below).
+_DEFAULT_HANDLER_TIMEOUT = 30.0
+_LONG_RUNNING_HANDLER_TIMEOUT = 600.0
+_UNDO_PUSH_TIMEOUT = 5.0
+
+
+def _handler_timeout(meta: dict) -> float:
+    if meta.get("long_running"):
+        return _LONG_RUNNING_HANDLER_TIMEOUT
+    return _DEFAULT_HANDLER_TIMEOUT
+
 
 def _make_error(kind: str, message: str) -> dict:
     return {"ok": False, "error_kind": kind, "error": message}
@@ -62,13 +76,24 @@ async def run(call: ToolCallRaw, context) -> dict:
         return _make_error("user_denied", f"用户取消了 '{call.name}' 的执行。")
 
     # Dispatch to main thread and await result.
-    loop = asyncio.get_event_loop()
     try:
         future = run_on_main(handler, context=context, **call.arguments)
-        # run_on_main returns a concurrent.futures.Future; wrap for asyncio
-        result = await loop.run_in_executor(None, lambda: future.result(timeout=30))
-    except TimeoutError:
-        return _make_error("timeout", f"Skill '{call.name}' timed out (30s).")
+        # run_on_main returns a concurrent.futures.Future; wrap for asyncio so
+        # awaiting it does not occupy a thread-pool worker (important when many
+        # read-only skills run concurrently via asyncio.gather).
+        result = await asyncio.wait_for(
+            asyncio.wrap_future(future), timeout=_handler_timeout(meta)
+        )
+    except (asyncio.TimeoutError, TimeoutError):
+        # The grace window elapsed. Critically, the handler is STILL executing on
+        # the main thread — the timeout only abandons our wait, it does not cancel
+        # the work. Report honestly so the agent does not believe the call failed
+        # or that the scene is unchanged.
+        return _make_error(
+            "still_running",
+            f"'{call.name}' 仍在 Blender 主线程执行，未被中止（可能是大场景重算或耗时操作）。"
+            "请等待 Blender 恢复响应后，再次查询当前状态确认结果，不要假定它失败或未生效。",
+        )
     except Exception as exc:
         return _make_error("handler_exception", str(exc))
 
@@ -78,7 +103,9 @@ async def run(call: ToolCallRaw, context) -> dict:
     if ok_result.get("ok") and meta.get("undoable"):
         try:
             undo_future = run_on_main(_push_undo, call.name)
-            await loop.run_in_executor(None, lambda: undo_future.result(timeout=5))
+            await asyncio.wait_for(
+                asyncio.wrap_future(undo_future), timeout=_UNDO_PUSH_TIMEOUT
+            )
         except Exception:
             pass  # undo_push failure is non-fatal
 

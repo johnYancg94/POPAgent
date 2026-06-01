@@ -27,6 +27,7 @@ from bpy.types import Operator, Context
 
 from ..utils import dependencies
 from ..utils.async_loop import AsyncModalOperatorMixin
+from ..agent_core.ui_bridge import ui_write, ui_call, ui_read
 from ..properties.properties import ChatCompanionProperties
 from ..properties.addon_preferences import ChatCompanionPreferences
 from .. import __package__ as base_package
@@ -75,40 +76,74 @@ class CHAT_COMPANION_OT_test_connection(Operator, AsyncModalOperatorMixin):
     bl_options: dict = {"REGISTER", "INTERNAL"}
 
     async def async_execute(self, context: Context):
-        props: ChatCompanionProperties = context.scene.chat_companion_properties
-        prefs: ChatCompanionPreferences = context.preferences.addons[
-            base_package
-        ].preferences
+        # The coroutine runs on the background loop where bpy is off-limits.
+        # Snapshot all bpy/prefs-derived data on the main thread first.
+        try:
+            snap = await ui_read(self._snapshot, context)
+        except Exception as exc:
+            ui_call(self.report, {"WARNING"}, f"Connection test setup failed: {exc}")
+            self.quit()
+            return
 
-        props.connection_test_running = True
-        props.connection_test_result = ""
-        props.connection_test_message = "Testing..."
-        self._redraw(context)
+        props = snap["props"]
+        ui_write(
+            props,
+            connection_test_running=True,
+            connection_test_result="",
+            connection_test_message="Testing...",
+        )
+        ui_call(self._redraw_area, snap["area"])
 
         try:
-            await self._run_probe(context, props, prefs)
+            await self._run_probe(props, snap)
         finally:
-            props.connection_test_running = False
-            self._redraw(context)
+            ui_write(props, connection_test_running=False)
+            ui_call(self._redraw_area, snap["area"])
             self.quit()
 
-    async def _run_probe(self, context, props, prefs) -> None:
-        if not dependencies.dependencies_installed:
-            self._fail(props, "Dependencies not installed")
-            return
+    def _snapshot(self, context) -> dict:
+        """Main-thread read of everything the probe needs as plain data.
 
+        Resolves bpy.context fresh (the context captured at invoke time may be
+        stale by the time this runs on the main thread); keeps the captured
+        area reference only for redraw targeting.
+        """
+        ctx = bpy.context
+        props = ctx.scene.chat_companion_properties
+        prefs = ctx.preferences.addons[base_package].preferences
+        area = getattr(context, "area", None)
+        snap: dict = {
+            "props": props,
+            "area": area,
+            "deps_ok": dependencies.dependencies_installed,
+            "error": None,
+            "method": None,
+            "url": None,
+            "headers": None,
+        }
+        if not snap["deps_ok"]:
+            return snap
         if not _api_key_for_prefs(prefs):
-            self._fail(props, "No API key set")
-            return
-
+            snap["error"] = "No API key set"
+            return snap
         provider = _provider_for_prefs(prefs)
         if provider is None:
-            self._fail(props, f"Unsupported provider '{prefs.llm_organization}'")
+            snap["error"] = f"Unsupported provider '{prefs.llm_organization}'"
+            return snap
+        snap["method"], snap["url"], snap["headers"] = provider.connectivity_request(prefs)
+        return snap
+
+    async def _run_probe(self, props, snap: dict) -> None:
+        if not snap["deps_ok"]:
+            self._fail(props, "Dependencies not installed")
+            return
+        if snap["error"]:
+            self._fail(props, snap["error"])
             return
 
         import httpx
 
-        method, url, headers = provider.connectivity_request(prefs)
+        method, url, headers = snap["method"], snap["url"], snap["headers"]
         timeout = httpx.Timeout(
             _TEST_READ_TIMEOUT, connect=_TEST_CONNECT_TIMEOUT
         )
@@ -136,29 +171,37 @@ class CHAT_COMPANION_OT_test_connection(Operator, AsyncModalOperatorMixin):
         status = response.status_code
 
         if status == 200:
-            props.connection_test_result = "ok"
-            props.connection_test_message = f"OK · {latency_ms:.0f} ms"
-            self.report({"INFO"}, f"Connection OK ({latency_ms:.0f} ms)")
+            ui_write(
+                props,
+                connection_test_result="ok",
+                connection_test_message=f"OK · {latency_ms:.0f} ms",
+            )
+            ui_call(self.report, {"INFO"}, f"Connection OK ({latency_ms:.0f} ms)")
         elif status in (401, 403):
             self._fail(props, f"Auth failed (HTTP {status}) · check API key")
         elif status == 404:
             # Endpoint reached but no /models route: still proves connectivity.
-            props.connection_test_result = "ok"
-            props.connection_test_message = (
-                f"Reachable · {latency_ms:.0f} ms (no /models route)"
+            ui_write(
+                props,
+                connection_test_result="ok",
+                connection_test_message=f"Reachable · {latency_ms:.0f} ms (no /models route)",
             )
-            self.report({"INFO"}, f"Reachable ({latency_ms:.0f} ms)")
+            ui_call(self.report, {"INFO"}, f"Reachable ({latency_ms:.0f} ms)")
         else:
             self._fail(props, f"HTTP {status} · {latency_ms:.0f} ms")
 
     def _fail(self, props, message: str) -> None:
-        props.connection_test_result = "fail"
-        props.connection_test_message = message
-        self.report({"WARNING"}, f"Connection test failed: {message}")
+        ui_write(
+            props,
+            connection_test_result="fail",
+            connection_test_message=message,
+        )
+        ui_call(self.report, {"WARNING"}, f"Connection test failed: {message}")
 
-    def _redraw(self, context) -> None:
+    @staticmethod
+    def _redraw_area(area) -> None:
         try:
-            if context.area is not None:
-                context.area.tag_redraw()
+            if area is not None:
+                area.tag_redraw()
         except Exception:
             pass

@@ -129,5 +129,12 @@ class Dependencies:
             ):
                 sys.path.append(site_packages_path)
 
-        loop = asyncio.get_event_loop()
-        loop.run_until_complete(install_package("httpx==0.24.0", force))
+        # Run the one-shot install coroutine on a dedicated loop. Do NOT use
+        # asyncio.get_event_loop(): the agent runtime now owns a loop on a
+        # background thread, the main thread has none, and on Python 3.13
+        # get_event_loop() no longer auto-creates one (raises RuntimeError).
+        loop = asyncio.new_event_loop()
+        try:
+            loop.run_until_complete(install_package("httpx==0.24.0", force))
+        finally:
+            loop.close()

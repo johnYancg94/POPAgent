@@ -186,8 +186,15 @@ async def ask_confirmation(skill: dict, args: dict) -> dict:
 
     run_on_main(_invoke_popup_main_thread, skill, args)
 
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, lambda: fut.result(timeout=300))
+    # Wrap the popup's concurrent Future for the bg event loop. wait_for releases
+    # the loop while the modal dialog is open (driven by the main thread), instead
+    # of pinning a thread-pool worker for up to 5 minutes.
+    try:
+        return await asyncio.wait_for(asyncio.wrap_future(fut), timeout=300)
+    except (asyncio.TimeoutError, TimeoutError):
+        _pending_future = None
+        _pending_payload = None
+        return {"approved": False, "trust_session": False}
 
 
 def clear_session_trust() -> None:
