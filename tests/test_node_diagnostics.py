@@ -76,6 +76,52 @@ def test_analyze_material_identifies_pbr_channels_connected_to_principled():
     assert material["channels"]["normal"]["connected"] is True
 
 
+def test_analyze_material_tracks_normal_map_source_per_node():
+    analysis = node_diagnostics.analyze_material_snapshot({
+        "materials": [{
+            "name": "PBR Mat",
+            "use_nodes": True,
+            "nodes": [
+                {"name": "BSDF", "type": "BSDF_PRINCIPLED"},
+                {"name": "Used Normal Map", "type": "NORMAL_MAP"},
+                {"name": "Unused Normal Map", "type": "NORMAL_MAP"},
+                {"name": "Used Normal", "type": "TEX_IMAGE", "image": {"name": "used_normal", "filepath": "used.png"}},
+                {"name": "Unused Normal", "type": "TEX_IMAGE", "image": {"name": "unused_normal", "filepath": "unused.png"}},
+            ],
+            "links": [
+                {"from_node": "Unused Normal", "from_socket": "Color", "to_node": "Unused Normal Map", "to_socket": "Color"},
+                {"from_node": "Used Normal", "from_socket": "Color", "to_node": "Used Normal Map", "to_socket": "Color"},
+                {"from_node": "Used Normal Map", "from_socket": "Normal", "to_node": "BSDF", "to_socket": "Normal"},
+            ],
+        }]
+    })
+
+    normal = analysis["materials"][0]["channels"]["normal"]
+    assert normal["connected"] is True
+    assert normal["source_node"] == "Used Normal"
+    assert normal["source_type"] == "TEX_IMAGE"
+
+
+def test_analyze_material_detects_channels_when_principled_node_is_renamed():
+    analysis = node_diagnostics.analyze_material_snapshot({
+        "materials": [{
+            "name": "PBR Mat",
+            "use_nodes": True,
+            "nodes": [
+                {"name": "Main Shader", "type": "BSDF_PRINCIPLED"},
+                {"name": "Albedo", "type": "TEX_IMAGE", "image": {"name": "rock_albedo", "filepath": "base.png"}},
+            ],
+            "links": [
+                {"from_node": "Albedo", "from_socket": "Color", "to_node": "Main Shader", "to_socket": "Base Color"},
+            ],
+        }]
+    })
+
+    material = analysis["materials"][0]
+    assert material["channels"]["base_color"]["connected"] is True
+    assert material["channels"]["base_color"]["source_node"] == "Albedo"
+
+
 def test_plan_pbr_texture_paths_keeps_supported_channels_only():
     plan = node_diagnostics.plan_pbr_texture_paths({
         "base_color": "base.png",
@@ -139,6 +185,34 @@ def test_validate_material_reports_texture_that_looks_unconnected_to_expected_ch
     assert "unconnected_pbr_texture" in kinds
 
 
+def test_validate_material_does_not_treat_color_substring_as_base_color():
+    report = node_diagnostics.validate_material_snapshot({
+        "materials": [{
+            "name": "Mat",
+            "use_nodes": True,
+            "nodes": [
+                {"name": "BSDF", "type": "BSDF_PRINCIPLED"},
+                {
+                    "name": "Discoloration Mask",
+                    "type": "TEX_IMAGE",
+                    "image": {
+                        "name": "discoloration_mask",
+                        "filepath": "discoloration_mask.png",
+                    },
+                },
+            ],
+            "links": [],
+        }]
+    })
+
+    issues = [
+        issue
+        for issue in report["issues"]
+        if issue["kind"] == "unconnected_pbr_texture"
+    ]
+    assert issues == []
+
+
 def test_validate_material_requires_principled_connected_to_surface_output():
     report = node_diagnostics.validate_material_snapshot({
         "materials": [{
@@ -154,6 +228,28 @@ def test_validate_material_requires_principled_connected_to_surface_output():
 
     kinds = {issue["kind"] for issue in report["issues"]}
     assert "missing_surface_output_link" in kinds
+
+
+def test_validate_material_reports_texture_connected_to_inactive_principled():
+    report = node_diagnostics.validate_material_snapshot({
+        "materials": [{
+            "name": "Layered Mat",
+            "use_nodes": True,
+            "nodes": [
+                {"name": "Rendered BSDF", "type": "BSDF_PRINCIPLED"},
+                {"name": "Unused BSDF", "type": "BSDF_PRINCIPLED"},
+                {"name": "Output", "type": "OUTPUT_MATERIAL"},
+                {"name": "Base Color", "type": "TEX_IMAGE", "image": {"name": "wood_basecolor", "filepath": "base.png"}},
+            ],
+            "links": [
+                {"from_node": "Rendered BSDF", "from_socket": "BSDF", "to_node": "Output", "to_socket": "Surface"},
+                {"from_node": "Base Color", "from_socket": "Color", "to_node": "Unused BSDF", "to_socket": "Base Color"},
+            ],
+        }]
+    })
+
+    kinds = {issue["kind"] for issue in report["issues"]}
+    assert "unconnected_pbr_texture" in kinds
 
 
 def test_validate_material_reports_data_texture_using_color_space():
@@ -181,6 +277,120 @@ def test_validate_material_reports_data_texture_using_color_space():
 
     kinds = {issue["kind"] for issue in report["issues"]}
     assert "wrong_texture_color_space" in kinds
+
+
+def test_validate_material_accepts_non_color_data_color_space():
+    report = node_diagnostics.validate_material_snapshot({
+        "materials": [{
+            "name": "Mat",
+            "use_nodes": True,
+            "nodes": [
+                {"name": "BSDF", "type": "BSDF_PRINCIPLED"},
+                {
+                    "name": "Roughness",
+                    "type": "TEX_IMAGE",
+                    "image": {
+                        "name": "mat_roughness",
+                        "filepath": "roughness.png",
+                        "color_space": "Non-Color Data",
+                    },
+                },
+            ],
+            "links": [
+                {"from_node": "Roughness", "from_socket": "Color", "to_node": "BSDF", "to_socket": "Roughness"},
+            ],
+        }]
+    })
+
+    kinds = {issue["kind"] for issue in report["issues"]}
+    assert "wrong_texture_color_space" not in kinds
+
+
+def test_validate_material_reports_alpha_connected_but_material_opaque():
+    report = node_diagnostics.validate_material_snapshot({
+        "materials": [{
+            "name": "Glass",
+            "use_nodes": True,
+            "blend_method": "OPAQUE",
+            "nodes": [
+                {"name": "BSDF", "type": "BSDF_PRINCIPLED"},
+                {"name": "Output", "type": "OUTPUT_MATERIAL"},
+                {
+                    "name": "Opacity",
+                    "type": "TEX_IMAGE",
+                    "image": {
+                        "name": "glass_opacity",
+                        "filepath": "opacity.png",
+                        "color_space": "Non-Color",
+                    },
+                },
+            ],
+            "links": [
+                {"from_node": "BSDF", "from_socket": "BSDF", "to_node": "Output", "to_socket": "Surface"},
+                {"from_node": "Opacity", "from_socket": "Color", "to_node": "BSDF", "to_socket": "Alpha"},
+            ],
+        }]
+    })
+
+    kinds = {issue["kind"] for issue in report["issues"]}
+    assert "alpha_channel_requires_transparency" in kinds
+
+
+def test_validate_material_accepts_dithered_alpha_transparency():
+    report = node_diagnostics.validate_material_snapshot({
+        "materials": [{
+            "name": "Leaves",
+            "use_nodes": True,
+            "surface_render_method": "DITHERED",
+            "nodes": [
+                {"name": "BSDF", "type": "BSDF_PRINCIPLED"},
+                {"name": "Output", "type": "OUTPUT_MATERIAL"},
+                {
+                    "name": "Opacity",
+                    "type": "TEX_IMAGE",
+                    "image": {
+                        "name": "leaf_opacity",
+                        "filepath": "opacity.png",
+                        "color_space": "Non-Color",
+                    },
+                },
+            ],
+            "links": [
+                {"from_node": "BSDF", "from_socket": "BSDF", "to_node": "Output", "to_socket": "Surface"},
+                {"from_node": "Opacity", "from_socket": "Color", "to_node": "BSDF", "to_socket": "Alpha"},
+            ],
+        }]
+    })
+
+    kinds = {issue["kind"] for issue in report["issues"]}
+    assert "alpha_channel_requires_transparency" not in kinds
+
+
+def test_validate_material_requires_normal_texture_to_use_normal_map_node():
+    report = node_diagnostics.validate_material_snapshot({
+        "materials": [{
+            "name": "Rock",
+            "use_nodes": True,
+            "nodes": [
+                {"name": "BSDF", "type": "BSDF_PRINCIPLED"},
+                {
+                    "name": "Normal",
+                    "type": "TEX_IMAGE",
+                    "image": {
+                        "name": "rock_normal",
+                        "filepath": "normal.png",
+                        "color_space": "Non-Color",
+                    },
+                },
+            ],
+            "links": [
+                {"from_node": "Normal", "from_socket": "Color", "to_node": "BSDF", "to_socket": "Normal"},
+            ],
+        }]
+    })
+
+    kinds = {issue["kind"] for issue in report["issues"]}
+    assert "normal_texture_requires_normal_map" in kinds
 
 
 def test_validate_geometry_nodes_requires_group_input_output():
@@ -256,6 +466,127 @@ def test_validate_geometry_nodes_requires_geometry_output_link():
     assert "missing_geometry_output_link" in kinds
 
 
+def test_validate_geometry_nodes_rejects_non_geometry_output_link_source():
+    report = node_diagnostics.validate_geometry_nodes_snapshot({
+        "objects": [{
+            "name": "Cube",
+            "modifiers": [{
+                "name": "GeometryNodes",
+                "type": "NODES",
+                "node_group": {
+                    "name": "GN",
+                    "interface": [
+                        {"name": "Geometry", "in_out": "INPUT", "socket_type": "NodeSocketGeometry"},
+                        {"name": "Geometry", "in_out": "OUTPUT", "socket_type": "NodeSocketGeometry"},
+                    ],
+                    "nodes": [
+                        {"name": "Group Input", "type": "GROUP_INPUT"},
+                        {"name": "Group Output", "type": "GROUP_OUTPUT"},
+                        {"name": "Value", "type": "VALUE"},
+                    ],
+                    "links": [
+                        {"from_node": "Value", "from_socket": "Value", "to_node": "Group Output", "to_socket": "Geometry"},
+                    ],
+                },
+            }],
+        }]
+    })
+
+    kinds = {issue["kind"] for issue in report["issues"]}
+    assert "missing_geometry_output_link" in kinds
+
+
+def test_validate_geometry_nodes_rejects_non_geometry_socket_named_geometry():
+    report = node_diagnostics.validate_geometry_nodes_snapshot({
+        "objects": [{
+            "name": "Cube",
+            "modifiers": [{
+                "name": "GeometryNodes",
+                "type": "NODES",
+                "node_group": {
+                    "name": "GN",
+                    "interface": [
+                        {"name": "Geometry", "in_out": "INPUT", "socket_type": "NodeSocketGeometry"},
+                        {"name": "Geometry", "in_out": "OUTPUT", "socket_type": "NodeSocketGeometry"},
+                    ],
+                    "nodes": [
+                        {"name": "Group Input", "type": "GROUP_INPUT"},
+                        {"name": "Group Output", "type": "GROUP_OUTPUT"},
+                        {
+                            "name": "Custom Value",
+                            "type": "VALUE",
+                            "outputs": [{"name": "Geometry", "type": "VALUE"}],
+                        },
+                    ],
+                    "links": [
+                        {"from_node": "Custom Value", "from_socket": "Geometry", "to_node": "Group Output", "to_socket": "Geometry"},
+                    ],
+                },
+            }],
+        }]
+    })
+
+    kinds = {issue["kind"] for issue in report["issues"]}
+    assert "missing_geometry_output_link" in kinds
+
+
+def test_validate_geometry_nodes_accepts_mesh_socket_as_geometry_output_source():
+    report = node_diagnostics.validate_geometry_nodes_snapshot({
+        "objects": [{
+            "name": "Cube",
+            "modifiers": [{
+                "name": "GeometryNodes",
+                "type": "NODES",
+                "node_group": {
+                    "name": "GN",
+                    "interface": [
+                        {"name": "Geometry", "in_out": "INPUT", "socket_type": "NodeSocketGeometry"},
+                        {"name": "Geometry", "in_out": "OUTPUT", "socket_type": "NodeSocketGeometry"},
+                    ],
+                    "nodes": [
+                        {"name": "Group Input", "type": "GROUP_INPUT"},
+                        {"name": "Group Output", "type": "GROUP_OUTPUT"},
+                        {"name": "Mesh Cube", "type": "MESH_CUBE"},
+                    ],
+                    "links": [
+                        {"from_node": "Mesh Cube", "from_socket": "Mesh", "to_node": "Group Output", "to_socket": "Geometry"},
+                    ],
+                },
+            }],
+        }]
+    })
+
+    kinds = {issue["kind"] for issue in report["issues"]}
+    assert "missing_geometry_output_link" not in kinds
+
+
+def test_validate_geometry_nodes_requires_geometry_interface_sockets():
+    report = node_diagnostics.validate_geometry_nodes_snapshot({
+        "objects": [{
+            "name": "Cube",
+            "modifiers": [{
+                "name": "GeometryNodes",
+                "type": "NODES",
+                "node_group": {
+                    "name": "GN",
+                    "interface": [
+                        {"name": "Factor", "in_out": "INPUT", "socket_type": "NodeSocketFloat"},
+                    ],
+                    "nodes": [
+                        {"name": "Group Input", "type": "GROUP_INPUT"},
+                        {"name": "Group Output", "type": "GROUP_OUTPUT"},
+                    ],
+                    "links": [],
+                },
+            }],
+        }]
+    })
+
+    kinds = {issue["kind"] for issue in report["issues"]}
+    assert "missing_geometry_input_socket" in kinds
+    assert "missing_geometry_output_socket" in kinds
+
+
 def test_analyze_geometry_nodes_summarizes_interface_sockets():
     analysis = node_diagnostics.analyze_geometry_nodes_snapshot({
         "objects": [{
@@ -291,15 +622,27 @@ def run():
     test_validate_material_requires_principled_shader()
     test_validate_material_reports_missing_image_paths()
     test_analyze_material_identifies_pbr_channels_connected_to_principled()
+    test_analyze_material_tracks_normal_map_source_per_node()
+    test_analyze_material_detects_channels_when_principled_node_is_renamed()
     test_plan_pbr_texture_paths_keeps_supported_channels_only()
     test_plan_pbr_texture_paths_accepts_common_channel_aliases()
     test_plan_pbr_texture_paths_reports_missing_paths()
     test_validate_material_reports_texture_that_looks_unconnected_to_expected_channel()
+    test_validate_material_does_not_treat_color_substring_as_base_color()
     test_validate_material_requires_principled_connected_to_surface_output()
+    test_validate_material_reports_texture_connected_to_inactive_principled()
     test_validate_material_reports_data_texture_using_color_space()
+    test_validate_material_accepts_non_color_data_color_space()
+    test_validate_material_reports_alpha_connected_but_material_opaque()
+    test_validate_material_accepts_dithered_alpha_transparency()
+    test_validate_material_requires_normal_texture_to_use_normal_map_node()
     test_validate_geometry_nodes_requires_group_input_output()
     test_validate_geometry_nodes_reports_invalid_links()
     test_validate_geometry_nodes_requires_geometry_output_link()
+    test_validate_geometry_nodes_rejects_non_geometry_output_link_source()
+    test_validate_geometry_nodes_rejects_non_geometry_socket_named_geometry()
+    test_validate_geometry_nodes_accepts_mesh_socket_as_geometry_output_source()
+    test_validate_geometry_nodes_requires_geometry_interface_sockets()
     test_analyze_geometry_nodes_summarizes_interface_sockets()
     print("test_node_diagnostics OK")
     return True

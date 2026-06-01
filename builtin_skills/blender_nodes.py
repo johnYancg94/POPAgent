@@ -75,6 +75,8 @@ def _material_snapshot(material) -> dict:
     data = {
         "name": material.name,
         "use_nodes": bool(material.use_nodes),
+        "blend_method": getattr(material, "blend_method", ""),
+        "surface_render_method": getattr(material, "surface_render_method", ""),
         "nodes": [],
         "links": [],
     }
@@ -166,6 +168,29 @@ def _set_non_color(image):
         image.colorspace_settings.name = "Non-Color"
     except Exception:
         pass
+
+
+def _enable_material_transparency(material):
+    configured = {}
+    if hasattr(material, "blend_method"):
+        try:
+            material.blend_method = "BLEND"
+            configured["blend_method"] = getattr(material, "blend_method", "")
+        except Exception as exc:
+            configured["blend_method_error"] = str(exc)
+    if hasattr(material, "surface_render_method"):
+        for value in ("BLENDED", "DITHERED"):
+            try:
+                material.surface_render_method = value
+                configured["surface_render_method"] = getattr(
+                    material,
+                    "surface_render_method",
+                    "",
+                )
+                break
+            except Exception as exc:
+                configured["surface_render_method_error"] = str(exc)
+    return configured
 
 
 def _load_image(path: str):
@@ -438,7 +463,7 @@ def _handler_set_material_node_input(
     return result
 
 
-def _connect_texture_channel(tree, principled, channel: str, path: str) -> dict:
+def _connect_texture_channel(material, tree, principled, channel: str, path: str) -> dict:
     image = _load_image(path)
     image_node = tree.nodes.new("ShaderNodeTexImage")
     image_node.name = f"POPAgent {channel}"
@@ -468,7 +493,10 @@ def _connect_texture_channel(tree, principled, channel: str, path: str) -> dict:
         if target and color_output:
             tree.links.new(color_output, target)
 
-    return {"channel": channel, "path": path, "image": image.name}
+    result = {"channel": channel, "path": path, "image": image.name}
+    if channel == "alpha":
+        result["material_transparency"] = _enable_material_transparency(material)
+    return result
 
 
 def _handler_connect_pbr_textures(
@@ -503,7 +531,13 @@ def _handler_connect_pbr_textures(
     connected = []
     for channel, path in plan["channels"].items():
         try:
-            connected.append(_connect_texture_channel(tree, principled, channel, path))
+            connected.append(_connect_texture_channel(
+                material,
+                tree,
+                principled,
+                channel,
+                path,
+            ))
         except Exception as exc:
             return {
                 "ok": False,

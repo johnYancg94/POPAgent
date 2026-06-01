@@ -776,6 +776,25 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                 "run a screenshot script themselves."
             )
 
+        system_text += (
+            "\n\nBlender node expert rule: for material-node tasks, inspect or "
+            "validate first with `blender.material.inspect_nodes` or "
+            "`blender.material.validate_nodes`; when the user explicitly wants "
+            "PBR texture hookup, prefer `blender.material.connect_pbr_textures` "
+            "over ad-hoc Python. For Geometry Nodes tasks, inspect or validate "
+            "first with `blender.geometry_nodes.inspect` or "
+            "`blender.geometry_nodes.validate`; for a basic Geometry Nodes modifier "
+            "or pass-through node group, prefer "
+            "`blender.geometry_nodes.ensure_basic_group`. When exact Blender 5.1 "
+            "node type identifiers are uncertain, call "
+            "`blender.nodes.search_types` before choosing node IDs. For controlled "
+            "node graph edits, prefer `blender.material.add_node`, "
+            "`blender.material.connect_nodes`, `blender.material.set_node_input`, "
+            "`blender.geometry_nodes.add_node`, `blender.geometry_nodes.connect_nodes`, "
+            "and `blender.geometry_nodes.set_node_input`. Use `dev.run_python` only "
+            "when the dedicated node skills cannot express the requested operation."
+        )
+
         mb = MessageBuilder.from_history(history, max_items=max_history_context)
         # Collect enabled text attachments and append to user prompt
         text_attachments = context.scene.chat_companion_attachments

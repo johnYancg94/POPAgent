@@ -47,6 +47,10 @@ def test_node_skills_are_read_only_and_named_for_blender_domains():
     assert "plan_pbr_texture_paths" in text
     assert "default_value" in text
     assert "_socket_default_value" in text
+    assert "blend_method" in text
+    assert "surface_render_method" in text
+    assert "_enable_material_transparency" in text
+    assert "material_transparency" in text
     assert '"requires_confirmation": "first"' in text
     assert "_node_group_interface_snapshot" in text
     assert "GeometryNodeTree" in text
@@ -54,9 +58,31 @@ def test_node_skills_are_read_only_and_named_for_blender_domains():
     assert "GeometryNode" in text
 
 
+def test_readme_lists_registered_node_skill_names():
+    readme = (ROOT / "README.md").read_text(encoding="utf-8")
+
+    assert "`blender.nodes.search_types`" in readme
+    assert "`blender.material.inspect_nodes`" in readme
+    assert "`blender.material.validate_nodes`" in readme
+    assert "`blender.material.connect_pbr_textures`" in readme
+    assert "`blender.material.add_node`" in readme
+    assert "`blender.material.connect_nodes`" in readme
+    assert "`blender.material.set_node_input`" in readme
+    assert "`blender.geometry_nodes.inspect`" in readme
+    assert "`blender.geometry_nodes.validate`" in readme
+    assert "`blender.geometry_nodes.ensure_basic_group`" in readme
+    assert "`blender.geometry_nodes.add_node`" in readme
+    assert "`blender.geometry_nodes.connect_nodes`" in readme
+    assert "`blender.geometry_nodes.set_node_input`" in readme
+
+    assert "`blender.nodes.inspect_materials`" not in readme
+    assert "`blender.nodes.inspect_geometry_nodes`" not in readme
+
+
 def run():
     test_builtin_node_skills_are_registered()
     test_node_skills_are_read_only_and_named_for_blender_domains()
+    test_readme_lists_registered_node_skill_names()
     print("test_blender_nodes_wiring OK")
     return True
 

@@ -54,6 +54,10 @@ def _normalize(value: str | None) -> str:
     return (value or "").lower().replace(" ", "_").replace("-", "_").replace(".", "_")
 
 
+def _tokens(value: str | None) -> set[str]:
+    return {token for token in _normalize(value).split("_") if token}
+
+
 def _node_map(nodes: list[dict]) -> dict[str, dict]:
     return {node.get("name", ""): node for node in nodes}
 
@@ -62,10 +66,11 @@ def _find_principled_nodes(nodes: list[dict]) -> list[dict]:
     return [node for node in nodes if node.get("type") == "BSDF_PRINCIPLED"]
 
 
-def _link_targets_channel(link: dict) -> str | None:
+def _link_targets_channel(link: dict, nodes_by_name: dict[str, dict] | None = None) -> str | None:
     socket_name = _normalize(link.get("to_socket"))
-    to_node = _normalize(link.get("to_node"))
-    if "bsdf" not in to_node:
+    target_node = (nodes_by_name or {}).get(link.get("to_node"), {})
+    targets_principled = target_node.get("type") == "BSDF_PRINCIPLED"
+    if not targets_principled and "bsdf" not in _normalize(link.get("to_node")):
         return None
     for channel, spec in _PBR_CHANNELS.items():
         normalized_inputs = {_normalize(name) for name in spec["input_names"]}
@@ -76,15 +81,20 @@ def _link_targets_channel(link: dict) -> str | None:
 
 def _texture_expected_channel(node: dict) -> str | None:
     image = node.get("image") or {}
-    haystack = " ".join([
-        _normalize(node.get("name")),
-        _normalize(node.get("label")),
-        _normalize(image.get("name")),
-        _normalize(image.get("filepath")),
-    ])
+    haystack_tokens = set()
+    for value in (
+        node.get("name"),
+        node.get("label"),
+        image.get("name"),
+        image.get("filepath"),
+    ):
+        normalized = _normalize(value)
+        if normalized:
+            haystack_tokens.add(normalized)
+            haystack_tokens.update(_tokens(normalized))
     for channel, spec in _PBR_CHANNELS.items():
         for token in spec["tokens"]:
-            if token in haystack:
+            if _normalize(token) in haystack_tokens:
                 return channel
     return None
 
@@ -99,37 +109,45 @@ def _canonical_pbr_channel(value: str) -> str | None:
 def _connected_pbr_channels(material: dict) -> dict[str, dict]:
     nodes = material.get("nodes", [])
     nodes_by_name = _node_map(nodes)
+    surface_principled_names = _surface_principled_node_names(material)
     channels = {
         channel: {"connected": False, "source_node": None, "source_type": None}
         for channel in _PBR_CHANNELS
     }
 
-    normal_map_inputs = set()
+    normal_map_inputs = {}
     for link in material.get("links", []):
         if _normalize(link.get("to_socket")) == "color":
             to_node = nodes_by_name.get(link.get("to_node"))
             if to_node and to_node.get("type") == "NORMAL_MAP":
-                normal_map_inputs.add(link.get("from_node"))
+                normal_map_inputs[link.get("to_node")] = link.get("from_node")
 
     for link in material.get("links", []):
-        channel = _link_targets_channel(link)
+        channel = _link_targets_channel(link, nodes_by_name)
         if channel is None:
+            continue
+        if surface_principled_names and link.get("to_node") not in surface_principled_names:
             continue
         from_node = nodes_by_name.get(link.get("from_node"), {})
         source_node = link.get("from_node")
+        source_type = from_node.get("type")
         if channel == "normal" and from_node.get("type") == "NORMAL_MAP":
-            for source in normal_map_inputs:
-                source_node = source
-                break
+            source_node = normal_map_inputs.get(link.get("from_node"), source_node)
+            source_type = nodes_by_name.get(source_node, {}).get("type")
         channels[channel] = {
             "connected": True,
             "source_node": source_node,
-            "source_type": from_node.get("type"),
+            "source_type": source_type,
         }
     return channels
 
 
 def _has_surface_output_link(material: dict) -> bool:
+    return bool(_surface_principled_node_names(material))
+
+
+def _surface_principled_node_names(material: dict) -> set[str]:
+    names = set()
     nodes_by_name = _node_map(material.get("nodes", []))
     for link in material.get("links", []):
         to_node = nodes_by_name.get(link.get("to_node"), {})
@@ -139,8 +157,23 @@ def _has_surface_output_link(material: dict) -> bool:
             and _normalize(link.get("to_socket")) == "surface"
             and from_node.get("type") == "BSDF_PRINCIPLED"
         ):
-            return True
-    return False
+            names.add(link.get("from_node"))
+    return names
+
+
+def _material_uses_transparency(material: dict) -> bool | None:
+    blend_method = material.get("blend_method")
+    if blend_method:
+        return str(blend_method).upper() not in {"OPAQUE", "NONE"}
+    surface_render_method = material.get("surface_render_method")
+    if surface_render_method:
+        return str(surface_render_method).upper() not in {"OPAQUE", "NONE"}
+    return None
+
+
+def _is_non_color_space(value: str | None) -> bool:
+    normalized = _normalize(value)
+    return normalized == "raw" or "non_color" in normalized
 
 
 def analyze_material_snapshot(snapshot: dict[str, Any]) -> dict:
@@ -167,6 +200,7 @@ def analyze_material_snapshot(snapshot: dict[str, Any]) -> dict:
             "name": material.get("name"),
             "has_principled_bsdf": bool(_find_principled_nodes(material.get("nodes", []))),
             "has_surface_output_link": _has_surface_output_link(material),
+            "uses_transparency": _material_uses_transparency(material),
             "pbr_score": pbr_score,
             "channels": channels,
             "expected_textures": expected_textures,
@@ -255,7 +289,7 @@ def validate_material_snapshot(snapshot: dict[str, Any]) -> dict:
             if (
                 expected_channel in {"roughness", "metallic", "normal", "alpha"}
                 and color_space
-                and color_space.lower() not in {"non-color", "non_color", "raw"}
+                and not _is_non_color_space(color_space)
             ):
                 issues.append(_issue(
                     "wrong_texture_color_space",
@@ -270,6 +304,34 @@ def validate_material_snapshot(snapshot: dict[str, Any]) -> dict:
                 ))
 
         material_analysis = analysis_by_name.get(material.get("name"), {})
+        if (
+            material_analysis.get("channels", {}).get("alpha", {}).get("connected")
+            and _material_uses_transparency(material) is False
+        ):
+            issues.append(_issue(
+                "alpha_channel_requires_transparency",
+                (
+                    f"Material '{material_name}' has Alpha connected but is still "
+                    "configured as opaque."
+                ),
+                material=material_name,
+                blend_method=material.get("blend_method"),
+                surface_render_method=material.get("surface_render_method"),
+            ))
+        normal_channel = material_analysis.get("channels", {}).get("normal", {})
+        if (
+            normal_channel.get("connected")
+            and normal_channel.get("source_type") == "TEX_IMAGE"
+        ):
+            issues.append(_issue(
+                "normal_texture_requires_normal_map",
+                (
+                    f"Material '{material_name}' connects a normal texture "
+                    "directly to Principled BSDF Normal. Insert a Normal Map node."
+                ),
+                material=material_name,
+                node=normal_channel.get("source_node"),
+            ))
         for texture in material_analysis.get("expected_textures", []):
             if not texture.get("connected"):
                 issues.append(_issue(
@@ -319,13 +381,42 @@ def _summarize_interface(interface: list[dict]) -> dict:
     }
 
 
+_GEOMETRY_OUTPUT_SOCKET_NAMES = {
+    "geometry",
+    "mesh",
+    "curve",
+    "curves",
+    "points",
+    "instances",
+    "volume",
+}
+
+
+def _node_output_socket(node: dict, socket_name: str) -> dict | None:
+    normalized_name = _normalize(socket_name)
+    for socket in node.get("outputs", []):
+        if _normalize(socket.get("name")) == normalized_name:
+            return socket
+    return None
+
+
+def _link_source_is_geometry(node: dict, socket_name: str) -> bool:
+    socket = _node_output_socket(node, socket_name)
+    socket_type = _normalize((socket or {}).get("type"))
+    if socket_type:
+        return socket_type == "geometry" or "geometry" in socket_type
+    return _normalize(socket_name) in _GEOMETRY_OUTPUT_SOCKET_NAMES
+
+
 def _has_geometry_output_link(node_group: dict) -> bool:
     nodes_by_name = _node_map(node_group.get("nodes", []))
     for link in node_group.get("links", []):
         to_node = nodes_by_name.get(link.get("to_node"), {})
+        from_node = nodes_by_name.get(link.get("from_node"), {})
         if (
             to_node.get("type") == "GROUP_OUTPUT"
             and _normalize(link.get("to_socket")) == "geometry"
+            and _link_source_is_geometry(from_node, link.get("from_socket"))
             and bool(link.get("from_node"))
             and bool(link.get("from_socket"))
         ):
@@ -385,6 +476,23 @@ def validate_geometry_nodes_snapshot(snapshot: dict[str, Any]) -> dict:
 
             nodes = node_group.get("nodes", [])
             node_types = {node.get("type") for node in nodes}
+            interface_summary = _summarize_interface(node_group.get("interface", []))
+            if not interface_summary["geometry_inputs"]:
+                issues.append(_issue(
+                    "missing_geometry_input_socket",
+                    f"Node group '{node_group.get('name', '<node group>')}' has no Geometry input interface socket.",
+                    object=object_name,
+                    modifier=modifier_name,
+                    node_group=node_group.get("name"),
+                ))
+            if not interface_summary["geometry_outputs"]:
+                issues.append(_issue(
+                    "missing_geometry_output_socket",
+                    f"Node group '{node_group.get('name', '<node group>')}' has no Geometry output interface socket.",
+                    object=object_name,
+                    modifier=modifier_name,
+                    node_group=node_group.get("name"),
+                ))
             if "GROUP_INPUT" not in node_types:
                 issues.append(_issue(
                     "missing_group_input",
