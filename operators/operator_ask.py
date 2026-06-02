@@ -60,6 +60,7 @@ from ..agent_core.execution_trace import (
     record_iteration,
     record_tool_call,
 )
+from ..agent_core.progress import AgentProgressEvent, ProgressSink
 from ..agent_core.agent_policy import (
     choose_max_iters,
     normalized_tool_signature,
@@ -311,6 +312,27 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
     @staticmethod
     def _on_main_thread() -> bool:
         return threading.current_thread() is threading.main_thread()
+
+    def _make_progress_sink(self, context: Context, props) -> ProgressSink:
+        area = getattr(context, "area", None)
+
+        def write_status(message: str, icon: str) -> None:
+            ui_write(props, waiting_string=message, waiting_icon=icon)
+            ui_call(self._redraw_area, area)
+
+        def write_text(text: str) -> None:
+            try:
+                parts = parse_llm_content(text)
+                ui_write(props, answer=text, answer_parts=json.dumps(parts))
+            except Exception:
+                ui_write(props, answer=text)
+            ui_call(self._redraw_area, area)
+
+        return ProgressSink(
+            status_writer=write_status,
+            text_writer=write_text,
+            min_text_interval=0.2,
+        )
 
     async def query_api(self, context: Context):
         props: ChatCompanionProperties = context.scene.chat_companion_properties
@@ -791,6 +813,16 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
             "short internal plan before acting. After each tool result, check "
             "whether the result satisfies the user's goal before calling another "
             "tool."
+            "\n\nEvidence rule: the host injects a fresh `# Blender Context` "
+            "snapshot every turn. You may answer current-state questions only "
+            "from that snapshot or from tool results in this turn. If the "
+            "requested current Blender state is not present in the snapshot, "
+            "call a query tool or `dev.run_python` before answering. For scene "
+            "changes, never claim an object, material, node, file, or setting was "
+            "created, edited, deleted, selected, exported, or otherwise changed "
+            "unless a modifying tool result in this turn confirms it. If no "
+            "appropriate tool result exists, state that the action has not been "
+            "performed instead of describing a fictional result."
         )
         try:
             scene_summary = await build_scene_summary()
@@ -822,6 +854,8 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         warned_sigs: set[tuple[str, str]] = set()
         trace = create_trace()
         self._active_trace = trace
+        progress = self._make_progress_sink(context, props)
+        progress.emit(AgentProgressEvent(kind="turn_start"))
 
         # Streaming with tools: enabled when both prefs.use_streaming AND the
         # provider declares support. Falls back to non-streaming otherwise.
@@ -852,25 +886,6 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                 "capability is missing from Blender, and never tell the user to "
                 "run a screenshot script themselves."
             )
-
-        system_text += (
-            "\n\nBlender node expert rule: for material-node tasks, inspect or "
-            "validate first with `blender.material.inspect_nodes` or "
-            "`blender.material.validate_nodes`; when the user explicitly wants "
-            "PBR texture hookup, prefer `blender.material.connect_pbr_textures` "
-            "over ad-hoc Python. For Geometry Nodes tasks, inspect or validate "
-            "first with `blender.geometry_nodes.inspect` or "
-            "`blender.geometry_nodes.validate`; for a basic Geometry Nodes modifier "
-            "or pass-through node group, prefer "
-            "`blender.geometry_nodes.ensure_basic_group`. When exact Blender 5.1 "
-            "node type identifiers are uncertain, call "
-            "`blender.nodes.search_types` before choosing node IDs. For controlled "
-            "node graph edits, prefer `blender.material.add_node`, "
-            "`blender.material.connect_nodes`, `blender.material.set_node_input`, "
-            "`blender.geometry_nodes.add_node`, `blender.geometry_nodes.connect_nodes`, "
-            "and `blender.geometry_nodes.set_node_input`. Use `dev.run_python` only "
-            "when the dedicated node skills cannot express the requested operation."
-        )
 
         # Snapshot history + text attachments on the main thread into a plain
         # MessageBuilder + string; bpy collections must not be iterated on the
@@ -923,9 +938,11 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
 
             started_at = time.perf_counter()
             status_code = 200
+            progress.emit(AgentProgressEvent(kind="model_request_start"))
             if use_stream:
                 llm_resp = await self._agent_stream_iter(
-                    context, client, provider, url, headers, body, prefs, props
+                    context, client, provider, url, headers, body, prefs, props,
+                    progress,
                 )
                 if llm_resp is None:
                     record_abort(trace, "stream_error")
@@ -938,6 +955,7 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                     headers=headers,
                     body=body,
                     timeout=prefs.timeout,
+                    progress=progress,
                 )
                 response.raise_for_status()
                 cc_globals.request_failed = False
@@ -1008,6 +1026,7 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                     )
                     mb.append_assistant(final_text)
                     record_abort(trace, "anti_loop")
+                    progress.emit(AgentProgressEvent(kind="finalizing"))
                     self._finish_agent(context, props, prefs, mb, final_text, trace)
                     return
 
@@ -1027,7 +1046,7 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                 async def _run_one(idx: int) -> tuple:
                     tc = tcs[idx]
                     started = time.perf_counter()
-                    result = await executor.run(tc, context)
+                    result = await executor.run(tc, context, progress=progress.emit)
                     if actions[idx] == "warn" and sigs[idx] not in warned_sigs:
                         warned_sigs.add(sigs[idx])
                         if isinstance(result, dict):
@@ -1036,6 +1055,17 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                     return result, (time.perf_counter() - started) * 1000
 
                 for group in groups:
+                    progress.emit(
+                        AgentProgressEvent(
+                            kind="tool_group_start",
+                            message=(
+                                f"准备执行 {len(group)} 个工具..."
+                                if len(group) > 1
+                                else "准备执行工具..."
+                            ),
+                            icon="TOOL_SETTINGS",
+                        )
+                    )
                     if len(group) == 1:
                         results[group[0]] = await _run_one(group[0])
                     else:
@@ -1066,27 +1096,27 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                 # Final natural-language reply — done.
                 final_text = llm_resp.text or "(no response)"
                 mb.append_assistant(final_text)
+                progress.emit(AgentProgressEvent(kind="finalizing"))
                 self._finish_agent(context, props, prefs, mb, final_text, trace)
                 return
 
         # Exceeded max_iters.
         final_text = f"已达最大迭代次数（{max_iters}），任务可能未完成。"
         record_abort(trace, "max_iters")
+        progress.emit(AgentProgressEvent(kind="finalizing"))
         self._finish_agent(context, props, prefs, mb, final_text, trace)
 
     async def _agent_stream_iter(self, context, client, provider, url, headers,
-                                 body, prefs, props):
+                                 body, prefs, props, progress: ProgressSink):
         """One streaming iteration: feed SSE lines to provider's parser, push
         text deltas live to props.answer, return the assembled LLMResponse.
 
         Returns None on error (caller should bail out)."""
         ui_write(props, is_streaming=True)
-        self._set_model_thinking(context, props)
         area = getattr(context, "area", None)
 
         async def operation():
             parser = provider.create_stream_parser()
-            running_text = ""
             ui_write(props, answer="", answer_parts=json.dumps([]))
             async with client.stream(
                 "POST", url=url, headers=headers, json=body,
@@ -1101,28 +1131,33 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                     events = parser.feed_line(line)
                     for ev in events:
                         if ev.kind == "text":
-                            running_text += ev.payload
-                            try:
-                                parts = parse_llm_content(running_text)
-                                ui_write(
-                                    props,
-                                    answer=running_text,
-                                    answer_parts=json.dumps(parts),
+                            progress.emit(
+                                AgentProgressEvent(
+                                    kind="model_stream_text",
+                                    text_delta=ev.payload,
                                 )
-                            except Exception:
-                                ui_write(props, answer=running_text)
-                            ui_call(self._redraw_area, area)
-                        # tool_call / done events handled at finalize().
+                            )
+                        elif ev.kind == "tool_call":
+                            progress.emit(
+                                AgentProgressEvent(
+                                    kind="tool_call_start",
+                                    tool_name=ev.payload.name,
+                                )
+                            )
+                        # done events handled at finalize().
+            progress.flush_text()
             return parser.finalize()
 
         def on_retry(attempt, attempts, exc, delay):
-            ui_write(
-                props,
-                waiting_string=(
-                    f"Retrying stream {attempt + 1}/{attempts} "
-                    f"after {type(exc).__name__}"
-                ),
-                waiting_icon="FILE_REFRESH",
+            progress.emit(
+                AgentProgressEvent(
+                    kind="retry",
+                    message=(
+                        f"Retrying stream {attempt + 1}/{attempts} "
+                        f"after {type(exc).__name__}"
+                    ),
+                    icon="FILE_REFRESH",
+                )
             )
             ui_call(self._redraw_area, area)
 
@@ -1141,9 +1176,11 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         finally:
             ui_write(props, is_streaming=False)
 
-    async def _post_with_retries(self, context, client, *, url, headers, body, timeout):
+    async def _post_with_retries(self, context, client, *, url, headers, body, timeout,
+                                 progress: ProgressSink | None = None):
         props: ChatCompanionProperties = context.scene.chat_companion_properties
-        self._set_model_thinking(context, props)
+        if progress is None:
+            self._set_model_thinking(context, props)
         area = getattr(context, "area", None)
 
         async def operation():
@@ -1157,14 +1194,24 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
             return response
 
         def on_retry(attempt, attempts, exc, delay):
-            ui_write(
-                props,
-                waiting_string=(
-                    f"Retrying request {attempt + 1}/{attempts} "
-                    f"after {type(exc).__name__}"
-                ),
-                waiting_icon="FILE_REFRESH",
+            message = (
+                f"Retrying request {attempt + 1}/{attempts} "
+                f"after {type(exc).__name__}"
             )
+            if progress is not None:
+                progress.emit(
+                    AgentProgressEvent(
+                        kind="retry",
+                        message=message,
+                        icon="FILE_REFRESH",
+                    )
+                )
+            else:
+                ui_write(
+                    props,
+                    waiting_string=message,
+                    waiting_icon="FILE_REFRESH",
+                )
             ui_call(self._redraw_area, area)
 
         return await run_with_retries(

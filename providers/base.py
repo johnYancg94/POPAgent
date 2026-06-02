@@ -28,9 +28,10 @@ class StreamEvent:
       "text"      — payload is a str fragment to append to displayed answer.
       "tool_call" — a tool_call has fully assembled; payload is ToolCallRaw.
       "done"      — stream finished; payload is the finish_reason str.
+      Other semantic stream events may be added later by provider adapters.
     """
 
-    kind: Literal["text", "tool_call", "done"]
+    kind: Literal["text", "tool_call", "done", "tool_call_delta"]
     payload: Any
 
 

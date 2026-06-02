@@ -94,5 +94,6 @@ LIST_SKILLS = {
         "launches_external_process": False,
         "undoable": False,
         "requires_confirmation": "never",
+        "requires_main_thread": False,
     },
 }

@@ -9,6 +9,7 @@ from __future__ import annotations
 from html.parser import HTMLParser
 from pathlib import Path
 import re
+from types import SimpleNamespace
 from typing import Callable
 from urllib.parse import urljoin
 from urllib.request import Request, urlopen
@@ -190,6 +191,9 @@ def _handler_api_search(
 
 
 def _get_prefs(context):
+    if isinstance(context, dict):
+        return SimpleNamespace(**context)
+
     if context is None:
         try:
             import bpy
@@ -365,5 +369,12 @@ BLENDER_API_SEARCH = {
         "launches_external_process": False,
         "undoable": False,
         "requires_confirmation": "never",
+        "requires_main_thread": False,
+        "background_context": "addon_preferences",
+        "background_prefs_fields": [
+            "blender_api_docs_path",
+            "blender_api_docs_url",
+            "blender_api_docs_prefer_local",
+        ],
     },
 }
