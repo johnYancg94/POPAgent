@@ -40,7 +40,9 @@ _SNAPSHOT_TIMEOUT = 5.0
 
 
 def _handler_timeout(meta: dict) -> float:
-    if meta.get("long_running"):
+    # awaits_user: 等用户输入（ask_human）；long_running: 算得久（烘焙等）。
+    # 语义不同但都需要放宽到长超时窗口，否则 30s 默认会误判 still_running。
+    if meta.get("awaits_user") or meta.get("long_running"):
         return _LONG_RUNNING_HANDLER_TIMEOUT
     return _DEFAULT_HANDLER_TIMEOUT
 
