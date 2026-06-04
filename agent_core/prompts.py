@@ -71,3 +71,32 @@ RULE_VISION_DISABLED = (
     "capability is missing from Blender, and never tell the user to "
     "run a screenshot script themselves."
 )
+
+
+def build_system_prompt(
+    *,
+    base: str,
+    multimodal: bool,
+    scene_summary: str = "",
+    skill_catalog: str = "",
+) -> str:
+    """拼装完整 system prompt。
+
+    base: 基础原则文本（运行时传 " ".join(chat_setup.system_instructions)）。
+    multimodal: 决定 vision 规则取 enabled 还是 disabled 分支。
+    scene_summary / skill_catalog: 可选附加段，空则不追加。
+    """
+    parts = [
+        base,
+        RULE_LIVE_STATE,
+        RULE_PYTHON_API,
+        RULE_NODE_EXPERT,
+        RULE_PLANNING,
+        RULE_EVIDENCE,
+        RULE_VISION_ENABLED if multimodal else RULE_VISION_DISABLED,
+    ]
+    if scene_summary:
+        parts.append(scene_summary)
+    if skill_catalog:
+        parts.append(skill_catalog)
+    return "\n\n".join(p for p in parts if p)

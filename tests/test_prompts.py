@@ -28,6 +28,32 @@ def test_vision_rules_distinct():
     assert "viewport_screenshot" in prompts.RULE_VISION_ENABLED
 
 
+def test_build_multimodal_on_includes_vision_enabled():
+    out = prompts.build_system_prompt(base="BASE", multimodal=True)
+    assert prompts.RULE_VISION_ENABLED in out
+    assert prompts.RULE_VISION_DISABLED not in out
+    assert "BASE" in out and prompts.RULE_EVIDENCE in out
+
+
+def test_build_multimodal_off_includes_vision_disabled():
+    out = prompts.build_system_prompt(base="BASE", multimodal=False)
+    assert prompts.RULE_VISION_DISABLED in out
+    assert prompts.RULE_VISION_ENABLED not in out
+
+
+def test_build_appends_scene_summary_and_catalog():
+    out = prompts.build_system_prompt(
+        base="BASE", multimodal=False,
+        scene_summary="SCENE_X", skill_catalog="CATALOG_Y")
+    assert "SCENE_X" in out and "CATALOG_Y" in out
+
+
+def test_build_omits_empty_optional_sections():
+    out = prompts.build_system_prompt(base="BASE", multimodal=False)
+    # 空 scene_summary / catalog 不应留下空段
+    assert "\n\n\n" not in out
+
+
 if __name__ == "__main__":
     # Standalone harness: pytest can't collect this file because importing the
     # POPAgent package triggers `import bpy` (see CLAUDE.md). The test itself
