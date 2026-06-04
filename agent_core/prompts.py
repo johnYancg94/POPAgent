@@ -45,6 +45,14 @@ RULE_PLANNING = (
     "whether the result satisfies the user's goal before calling another "
     "tool."
 )
+RULE_ASK_HUMAN = (
+    "Clarification rule: if the request is ambiguous and a wrong guess would "
+    "be hard to undo, call `agent.ask_human` with one concise question (and "
+    "optional 'options') instead of guessing. Use the returned answer in the "
+    "same turn. Do not use it to confirm destructive actions — the host "
+    "already gates those. If no answer comes back, state plainly that you "
+    "need clarification rather than proceeding on a guess."
+)
 RULE_EVIDENCE = (
     "Evidence rule: the host injects a fresh `# Blender Context` "
     "snapshot every turn. You may answer current-state questions only "
@@ -92,6 +100,7 @@ def build_system_prompt(
         RULE_PYTHON_API,
         RULE_NODE_EXPERT,
         RULE_PLANNING,
+        RULE_ASK_HUMAN,
         RULE_EVIDENCE,
         RULE_VISION_ENABLED if multimodal else RULE_VISION_DISABLED,
     ]

@@ -54,6 +54,12 @@ def test_build_omits_empty_optional_sections():
     assert "\n\n\n" not in out
 
 
+def test_ask_human_rule_present_and_wired():
+    assert "agent.ask_human" in prompts.RULE_ASK_HUMAN
+    out = prompts.build_system_prompt(base="BASE", multimodal=False)
+    assert "agent.ask_human" in out
+
+
 if __name__ == "__main__":
     # Standalone harness: pytest can't collect this file because importing the
     # POPAgent package triggers `import bpy` (see CLAUDE.md). The test itself
