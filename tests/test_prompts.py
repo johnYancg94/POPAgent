@@ -15,6 +15,19 @@ def test_base_principles_nonempty():
     assert "POPAgent" in prompts.BASE_PRINCIPLES
 
 
+def test_all_rules_present():
+    for const in ("RULE_LIVE_STATE", "RULE_PYTHON_API", "RULE_NODE_EXPERT",
+                  "RULE_PLANNING", "RULE_EVIDENCE",
+                  "RULE_VISION_ENABLED", "RULE_VISION_DISABLED"):
+        assert getattr(prompts, const).strip(), f"{const} empty"
+
+
+def test_vision_rules_distinct():
+    assert prompts.RULE_VISION_ENABLED != prompts.RULE_VISION_DISABLED
+    assert "Multimodal" in prompts.RULE_VISION_DISABLED
+    assert "viewport_screenshot" in prompts.RULE_VISION_ENABLED
+
+
 if __name__ == "__main__":
     # Standalone harness: pytest can't collect this file because importing the
     # POPAgent package triggers `import bpy` (see CLAUDE.md). The test itself
