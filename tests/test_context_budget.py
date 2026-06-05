@@ -47,3 +47,35 @@ def test_compact_small_dict_untouched():
 def test_compact_string_payload_truncated():
     out = cb.compact_tool_result("y" * 5000, max_chars=100)
     assert len(out) < 5000 and "elided" in out
+
+import types
+
+def _msg(role, text="", tool_result_content=None):
+    return types.SimpleNamespace(
+        role=role, text=text, images=[],
+        tool_result_content=tool_result_content,
+        tool_result_name="", tool_result_id="", tool_calls=[],
+    )
+
+def test_fit_keeps_recent_drops_oldest_when_over_budget():
+    msgs = [_msg("user", "a" * 4000), _msg("assistant", "b" * 4000),
+            _msg("user", "c" * 4000)]
+    out = cb.fit_messages(msgs, budget_tokens=1100, keep_last_n=1)
+    assert out[-1].text == "c" * 4000
+    assert len(out) < len(msgs)
+
+def test_fit_compacts_old_tool_result_but_not_recent():
+    big = {"ok": True, "image_base64": "Z" * 40000, "format": "png"}
+    msgs = [
+        _msg("tool_result", tool_result_content=dict(big)),
+        _msg("user", "recent"),
+        _msg("tool_result", tool_result_content=dict(big)),
+    ]
+    out = cb.fit_messages(msgs, budget_tokens=10_000_000, keep_last_n=1)
+    assert out[0].tool_result_content["image_base64"] == "<image elided>"
+    assert out[-1].tool_result_content["image_base64"] == "Z" * 40000
+
+def test_fit_never_empties_when_keep_last_n_set():
+    msgs = [_msg("user", "x" * 100000)]
+    out = cb.fit_messages(msgs, budget_tokens=1, keep_last_n=1)
+    assert len(out) == 1

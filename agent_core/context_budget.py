@@ -60,3 +60,46 @@ def compact_tool_result(content: Any, max_chars: int) -> Any:
             if len(blob) > 80:
                 out[key] = blob[:80] + f"...(elided {len(blob) - 80} chars)"
     return out
+
+
+def _msg_tokens(msg: Any) -> int:
+    text = getattr(msg, "text", "") or ""
+    total = estimate_tokens(text)
+    trc = getattr(msg, "tool_result_content", None)
+    if trc is not None:
+        blob = trc if isinstance(trc, str) else json.dumps(trc, ensure_ascii=False)
+        total += estimate_tokens(blob)
+    return total
+
+
+def fit_messages(msgs: list, budget_tokens: int, *, keep_last_n: int = 1) -> list:
+    """从最新往回累加 token，超预算丢更早整条；纳入但超大的老 tool_result
+    （非最近 keep_last_n 条）调 compact_tool_result 降级。
+
+    最近 keep_last_n 条永远保留且永不压缩（本轮证据）。"""
+    n = len(msgs)
+    if n == 0:
+        return []
+    keep_from = max(0, n - keep_last_n)
+    kept_reversed: list = []
+    used = 0
+    for i in range(n - 1, -1, -1):
+        msg = msgs[i]
+        protected = i >= keep_from
+        if protected:
+            kept_reversed.append(msg)
+            used += _msg_tokens(msg)
+            continue
+        candidate = msg
+        trc = getattr(msg, "tool_result_content", None)
+        if trc is not None:
+            import copy
+            candidate = copy.copy(msg)
+            candidate.tool_result_content = compact_tool_result(trc, max_chars=400)
+        cost = _msg_tokens(candidate)
+        if used + cost > budget_tokens:
+            break
+        kept_reversed.append(candidate)
+        used += cost
+    kept_reversed.reverse()
+    return kept_reversed
