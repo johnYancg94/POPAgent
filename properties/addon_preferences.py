@@ -271,6 +271,28 @@ class ChatCompanionPreferences(AddonPreferences):
         default=5,
     )
 
+    agent_context_window: props.IntProperty(
+        name="Context Window (tokens)",
+        description="Model context window in tokens; history is trimmed to fit a budget derived from this. Default 256k.",
+        min=8000,
+        max=2_000_000,
+        default=256000,
+    )
+
+    agent_context_1m_enabled: props.BoolProperty(
+        name="Enable 1M Context",
+        description="Use a 1,000,000-token budget ceiling for models that support million-token context. Only effective if the selected model actually supports it.",
+        default=False,
+    )
+
+    agent_skill_triage_threshold: props.IntProperty(
+        name="Skill Triage Threshold",
+        description="When the number of enabled skills exceeds this, expose only core skills as tools and offer the rest as an on-demand catalog. Default 80 keeps all skills directly callable for typical setups.",
+        min=1,
+        max=500,
+        default=80,
+    )
+
     # region usage log (append-only JSONL sink for team-wide aggregation)
     trace_log_enabled: props.BoolProperty(
         name="Log Agent Usage",
@@ -459,6 +481,18 @@ class ChatCompanionPreferences(AddonPreferences):
             operator=CHAT_COMPANION_OT_website.bl_idname, text="Get key", icon="KEY_HLT"
         )
         claude_key_website.url = "https://console.anthropic.com/account/keys"
+
+        # ! context (global 1M toggle, sits right under the API keys)
+        context_settings = layout.column(align=True)
+        context_settings.label(text="Context", icon="ALIGN_JUSTIFY")
+        ctx_1m_split: UILayout = context_settings.split(align=True, factor=2 / 5)
+        ctx_1m_left: UILayout = ctx_1m_split.row(align=True)
+        ctx_1m_left.alignment = "RIGHT"
+        ctx_1m_left.label(text="Enable 1M Context")
+        ctx_1m_right: UILayout = ctx_1m_split.column(align=True)
+        ctx_1m_right.prop(self, "agent_context_1m_enabled", text="")
+
+        layout.box()
 
         # ! display
         display_settings = layout.column(align=True)
