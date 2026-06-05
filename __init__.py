@@ -10,6 +10,7 @@ from .agent_core.main_thread import shutdown_main_thread, start_main_thread
 from .agent_core import async_runtime as _async_runtime
 from .agent_core import skill_registry as _skill_registry
 from .agent_core.confirm_dialog import POPAGENT_OT_confirm_skill, clear_session_trust
+from .agent_core.ask_human_dialog import POPAGENT_OT_ask_human, POPAGENT_OT_ask_human_pick
 from .agent_core.reverse_pull import pull_already_loaded_agent_skills
 from . import builtin_skills as _builtin_skills
 
@@ -152,6 +153,8 @@ classes = (
     CHAT_COMPANION_OT_select_open_ai,
     CHAT_COMPANION_OT_select_minimax,
     POPAGENT_OT_confirm_skill,
+    POPAGENT_OT_ask_human,
+    POPAGENT_OT_ask_human_pick,
     POPAGENT_OT_toggle_skill,
     POPAGENT_OT_clear_session_trust,
     POPAGENT_OT_set_skill_permission,

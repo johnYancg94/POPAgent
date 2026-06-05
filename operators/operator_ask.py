@@ -29,6 +29,7 @@ from ..utils.async_loop import AsyncModalOperatorMixin
 from ..utils import cc_globals
 from ..utils.chat_setup import system_instructions
 from ..utils.chat_setup import system_instructions_code_completion
+from ..agent_core import prompts as agent_prompts
 from ..utils.utils import (
     parse_llm_content,
     print_waiting_string,
@@ -47,6 +48,8 @@ from ..properties.addon_preferences import ChatCompanionPreferences
 from ..properties.property_updates import PropertyUpdates
 from .. import __package__ as base_package
 from ..agent_core import skill_registry, executor
+from ..agent_core import context_budget
+from ..agent_core import skill_triage
 from ..agent_core.ui_bridge import ui_write, ui_call, ui_read
 from ..agent_core.message_builder import MessageBuilder, ToolCall, history_context_items
 from ..agent_core.context_builder import build_scene_summary
@@ -792,46 +795,13 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
             self.show_general_error(context, solution=f"Provider '{org}' not supported in agent mode.")
             return
 
-        system_text = construct_parts(" ".join(system_instructions))
-        system_text += (
-            "\n\nLive Blender state rule: scene contents, selection, active object, "
-            "mode, and enabled addons may change between chat turns. For requests "
-            "about the current scene or current Blender state, call the relevant "
-            "query tool again and do not rely on prior chat answers."
-            "\n\nBlender Python API rule: before writing or executing Blender "
-            "Python when API names, operator parameters, context requirements, "
-            "or version behavior are uncertain, call `blender.api_search` and "
-            "base the code on the returned official documentation results."
-            "\n\nBlender node expert rule: for material-node tasks, inspect or "
-            "validate first with `blender.material.inspect_nodes` or "
-            "`blender.material.validate_nodes`; when the user explicitly wants "
-            "PBR texture hookup, prefer `blender.material.connect_pbr_textures` "
-            "over arbitrary Python. For Geometry Nodes tasks, inspect or validate "
-            "first with `blender.geometry_nodes.inspect` or "
-            "`blender.geometry_nodes.validate`; for a basic Geometry Nodes modifier "
-            "or pass-through node group, prefer "
-            "`blender.geometry_nodes.ensure_basic_group`. When exact Blender 5.1 "
-            "ShaderNode or GeometryNode type identifiers are uncertain, call "
-            "`blender.nodes.search_types` before choosing node IDs. For controlled "
-            "node graph edits, prefer `blender.material.add_node`, "
-            "`blender.material.connect_nodes`, `blender.material.set_node_input`, "
-            "`blender.geometry_nodes.add_node`, `blender.geometry_nodes.connect_nodes`, "
-            "and `blender.geometry_nodes.set_node_input`. Use `dev.run_python` only "
-            "when the dedicated node skills cannot express the requested operation."
-            "\n\nAgent planning/reflection rule: for multi-step tasks, keep a "
-            "short internal plan before acting. After each tool result, check "
-            "whether the result satisfies the user's goal before calling another "
-            "tool."
-            "\n\nEvidence rule: the host injects a fresh `# Blender Context` "
-            "snapshot every turn. You may answer current-state questions only "
-            "from that snapshot or from tool results in this turn. If the "
-            "requested current Blender state is not present in the snapshot, "
-            "call a query tool or `dev.run_python` before answering. For scene "
-            "changes, never claim an object, material, node, file, or setting was "
-            "created, edited, deleted, selected, exported, or otherwise changed "
-            "unless a modifying tool result in this turn confirms it. If no "
-            "appropriate tool result exists, state that the action has not been "
-            "performed instead of describing a fictional result."
+        multimodal_enabled = bool(getattr(props, "multimodal_enabled", False))
+        include_image_results = (
+            multimodal_enabled and provider.supports_image_input(prefs)
+        )
+        system_text = agent_prompts.build_system_prompt(
+            base=" ".join(system_instructions),
+            multimodal=include_image_results,
         )
         try:
             scene_summary = await build_scene_summary()
@@ -839,10 +809,6 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                 system_text = system_text + "\n\n" + scene_summary
         except Exception as exc:
             print(f"[agent] scene summary failed: {exc}")
-        multimodal_enabled = bool(getattr(props, "multimodal_enabled", False))
-        include_image_results = (
-            multimodal_enabled and provider.supports_image_input(prefs)
-        )
         skills = skill_registry.all_skills()
         if not include_image_results:
             # No image channel: drop the screenshot skill entirely so the model
@@ -850,7 +816,16 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
             # while telling the model "don't call it" invites the model to
             # hallucinate that the tool does not exist.
             skills = [s for s in skills if s.get("name") != "blender.viewport_screenshot"]
-        tools = provider.skills_to_tools(skills)
+        threshold = getattr(
+            prefs,
+            "agent_skill_triage_threshold",
+            skill_triage.DEFAULT_TRIAGE_THRESHOLD,
+        )
+        exposed, catalog = skill_triage.partition_skills(skills, threshold=threshold)
+        catalog_text = skill_triage.render_catalog(catalog)
+        if catalog_text:
+            system_text = system_text + "\n\n" + catalog_text
+        tools = provider.skills_to_tools(exposed)
 
         max_iters = choose_max_iters(
             self.user_prompt,
@@ -879,22 +854,6 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                     bpy.context.scene.chat_companion_image_attachments
                 )
             )
-        if include_image_results:
-            system_text += (
-                "\n\nVision rule: when the user asks about what is visible in "
-                "the current viewport, call `blender.viewport_screenshot`; its "
-                "result will be attached as an image in the next model turn."
-            )
-        else:
-            system_text += (
-                "\n\nVision rule: the current model configuration cannot read "
-                "image input, so the viewport screenshot tool is not available "
-                "this turn. When the user asks about what is visually in the "
-                "viewport, explain plainly that visual reading requires enabling "
-                "Multimodal input and using a compatible model. Do not claim the "
-                "capability is missing from Blender, and never tell the user to "
-                "run a screenshot script themselves."
-            )
 
         # Snapshot history + text attachments on the main thread into a plain
         # MessageBuilder + string; bpy collections must not be iterated on the
@@ -916,6 +875,12 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
 
         mb = await ui_read(_snapshot_messages)
 
+        eff_window = (
+            1_000_000 if getattr(prefs, "agent_context_1m_enabled", False)
+            else getattr(prefs, "agent_context_window", 256000)
+        )
+        ctx_budget = context_budget.history_budget(eff_window)
+
         ui_write(props, is_connecting=False)
 
         for iteration in range(max_iters):
@@ -925,6 +890,7 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                     system_text,
                     tool_name_mapper=provider._to_wire_tool_name,
                     include_image_results=include_image_results,
+                    budget_tokens=ctx_budget,
                 )
                 url, headers, body = provider.build_request(
                     prefs, messages, tools, system=system_for_wire, stream=use_stream
@@ -938,6 +904,7 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                         org == "deepseek"
                         or org == "mimo"
                     ),
+                    budget_tokens=ctx_budget,
                 )
                 url, headers, body = provider.build_request(
                     prefs, messages, tools, stream=use_stream
