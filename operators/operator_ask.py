@@ -45,6 +45,7 @@ from ..properties.property_updates import PropertyUpdates
 from .. import __package__ as base_package
 from ..agent_core import skill_registry, executor
 from ..agent_core import context_budget
+from ..agent_core import skill_triage
 from ..agent_core.ui_bridge import ui_write, ui_call, ui_read
 from ..agent_core.message_builder import MessageBuilder, ToolCall, history_context_items
 from ..agent_core.context_builder import build_scene_summary
@@ -806,7 +807,12 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
             # while telling the model "don't call it" invites the model to
             # hallucinate that the tool does not exist.
             skills = [s for s in skills if s.get("name") != "blender.viewport_screenshot"]
-        tools = provider.skills_to_tools(skills)
+        threshold = getattr(prefs, "agent_skill_triage_threshold", 60)
+        exposed, catalog = skill_triage.partition_skills(skills, threshold=threshold)
+        catalog_text = skill_triage.render_catalog(catalog)
+        if catalog_text:
+            system_text = system_text + "\n\n" + catalog_text
+        tools = provider.skills_to_tools(exposed)
 
         max_iters = choose_max_iters(
             self.user_prompt,
