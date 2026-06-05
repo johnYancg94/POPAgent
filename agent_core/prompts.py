@@ -79,6 +79,16 @@ RULE_VISION_DISABLED = (
     "capability is missing from Blender, and never tell the user to "
     "run a screenshot script themselves."
 )
+RULE_IDENTITY = (
+    "Identity/runtime rule: when the user asks who you are, which model "
+    "or provider you run on, or how much context you support, call "
+    "`agent.runtime_info` and answer from its result. Do not state your "
+    "model, provider, or context window from memory, and do not infer "
+    "them from preference fields such as `anthropic_model` (which holds a "
+    "default value regardless of the active provider). If the tool is "
+    "unavailable, say you cannot determine the runtime configuration "
+    "rather than guessing."
+)
 
 
 def build_system_prompt(
@@ -102,6 +112,7 @@ def build_system_prompt(
         RULE_PLANNING,
         RULE_ASK_HUMAN,
         RULE_EVIDENCE,
+        RULE_IDENTITY,
         RULE_VISION_ENABLED if multimodal else RULE_VISION_DISABLED,
     ]
     if scene_summary:

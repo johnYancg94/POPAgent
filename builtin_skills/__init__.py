@@ -27,6 +27,7 @@ from .blender_object import (
     ORGANIZE_COLLECTION,
 )
 from .agent_meta import LIST_SKILLS
+from .agent_runtime import RUNTIME_INFO
 from .agent_interact import ASK_HUMAN
 from .dev_skills import RUN_PYTHON
 from ..agent_core import skill_registry
@@ -63,6 +64,7 @@ _BUILTIN_SKILLS = [
     PARENT_OBJECTS,
     ORGANIZE_COLLECTION,
     LIST_SKILLS,
+    RUNTIME_INFO,
     ASK_HUMAN,
     RUN_PYTHON,
 ]
