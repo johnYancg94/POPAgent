@@ -76,13 +76,18 @@ def fit_messages(msgs: list, budget_tokens: int, *, keep_last_n: int = 1) -> lis
     """从最新往回累加 token，超预算丢更早整条；纳入但超大的老 tool_result
     （非最近 keep_last_n 条）调 compact_tool_result 降级。
 
-    最近 keep_last_n 条永远保留且永不压缩（本轮证据）。"""
+    最近 keep_last_n 条永远保留且永不压缩（本轮证据）。
+
+    裁剪后若发生过截断，会从窗口头部剥掉孤立的非 user 消息（cut 可能落在
+    assistant(tool_calls) 与其 tool_result 之间，留下无配对的 tool_result，
+    OpenAI/Claude 都会 400）。剥离止于受保护尾部，绝不清空。"""
     n = len(msgs)
     if n == 0:
         return []
     keep_from = max(0, n - keep_last_n)
     kept_reversed: list = []
     used = 0
+    truncated = False
     for i in range(n - 1, -1, -1):
         msg = msgs[i]
         protected = i >= keep_from
@@ -98,8 +103,12 @@ def fit_messages(msgs: list, budget_tokens: int, *, keep_last_n: int = 1) -> lis
             candidate.tool_result_content = compact_tool_result(trc, max_chars=400)
         cost = _msg_tokens(candidate)
         if used + cost > budget_tokens:
+            truncated = True
             break
         kept_reversed.append(candidate)
         used += cost
     kept_reversed.reverse()
+    if truncated:
+        while len(kept_reversed) > keep_last_n and kept_reversed[0].role != "user":
+            kept_reversed.pop(0)
     return kept_reversed

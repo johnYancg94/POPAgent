@@ -79,3 +79,31 @@ def test_fit_never_empties_when_keep_last_n_set():
     msgs = [_msg("user", "x" * 100000)]
     out = cb.fit_messages(msgs, budget_tokens=1, keep_last_n=1)
     assert len(out) == 1
+
+def test_fit_strips_leading_orphan_tool_result_after_cut():
+    # A cut that trims the assistant(tool_calls) but keeps its tool_result
+    # would leave the window starting with an orphaned tool_result, which
+    # both OpenAI and Anthropic reject with HTTP 400. The trimmer must clean it.
+    msgs = [
+        _msg("assistant", "a" * 4000),                       # ~1000 tok (gets cut)
+        _msg("tool_result", tool_result_content="d" * 1200), # survives -> orphan
+        _msg("user", "c" * 40),                              # protected newest
+    ]
+    out = cb.fit_messages(msgs, budget_tokens=120, keep_last_n=1)
+    assert out[0].role == "user"
+    assert all(m.role != "tool_result" for m in out)
+
+def test_fit_preserves_valid_group_when_user_heads_window():
+    # When a kept user message precedes the assistant(tool_calls)+tool_result
+    # group, the boundary is already clean and nothing extra should be stripped.
+    msgs = [
+        _msg("user", "o" * 8000),                       # oldest -> cut
+        _msg("user", "k" * 40),                         # heads the kept window
+        _msg("assistant", "a" * 40),
+        _msg("tool_result", tool_result_content="res"),
+        _msg("user", "u" * 40),                         # protected newest
+    ]
+    out = cb.fit_messages(msgs, budget_tokens=100, keep_last_n=1)
+    assert out[0].role == "user" and out[0].text == "k" * 40
+    assert any(m.role == "tool_result" for m in out)
+    assert any(m.role == "assistant" for m in out)
