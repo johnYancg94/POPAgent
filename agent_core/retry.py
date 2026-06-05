@@ -4,9 +4,10 @@ from __future__ import annotations
 
 import asyncio
 from dataclasses import dataclass
-from typing import Awaitable, Callable, TypeVar
+from typing import TYPE_CHECKING, Awaitable, Callable, TypeVar
 
-import httpx
+if TYPE_CHECKING:
+    import httpx
 
 T = TypeVar("T")
 
@@ -28,6 +29,8 @@ def build_httpx_timeout(read_timeout: float | None = None) -> httpx.Timeout:
     Pass ``read_timeout=None`` to disable the read timeout entirely
     (the model may think for an unbounded duration).
     """
+    import httpx
+
     return httpx.Timeout(
         connect=DEFAULT_CONNECT_TIMEOUT,
         read=read_timeout if read_timeout is not None else DEFAULT_REQUEST_TIMEOUT,
