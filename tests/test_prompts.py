@@ -17,7 +17,7 @@ def test_base_principles_nonempty():
 
 def test_all_rules_present():
     for const in ("RULE_LIVE_STATE", "RULE_PYTHON_API", "RULE_NODE_EXPERT",
-                  "RULE_PLANNING", "RULE_EVIDENCE",
+                  "RULE_WEB_SEARCH", "RULE_PLANNING", "RULE_EVIDENCE",
                   "RULE_VISION_ENABLED", "RULE_VISION_DISABLED"):
         assert getattr(prompts, const).strip(), f"{const} empty"
 

@@ -16,6 +16,7 @@ CORE_SKILL_NAMES = frozenset({
     "blender.select_objects",
     "blender.set_active",
     "blender.api_search",
+    "web.search",
 })
 
 

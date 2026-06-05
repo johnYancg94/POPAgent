@@ -1,5 +1,6 @@
 from .blender_query import QUERY_SCENE, LIST_ADDONS, VIEWPORT_SCREENSHOT
 from .blender_api_docs import BLENDER_API_SEARCH
+from .web_search import WEB_SEARCH
 from .blender_select import SELECT_OBJECTS, SET_ACTIVE
 from .blender_object_results import OBJECT_RESULTS
 from .blender_nodes import (
@@ -38,6 +39,7 @@ _BUILTIN_SKILLS = [
     LIST_ADDONS,
     VIEWPORT_SCREENSHOT,
     BLENDER_API_SEARCH,
+    WEB_SEARCH,
     SELECT_OBJECTS,
     SET_ACTIVE,
     OBJECT_RESULTS,

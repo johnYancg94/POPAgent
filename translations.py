@@ -66,6 +66,10 @@ _zh = {
         ("*", "URL"): "URL",
         ("*", "Local"): "本地",
         ("*", "Prefer Local"): "优先使用本地",
+        ("*", "Web Search"): "网页搜索",
+        ("*", "Enable"): "启用",
+        ("*", "Tavily API Key"): "Tavily API 密钥",
+        ("*", "Endpoint"): "端点",
 
         # --- 用量日志 ---
         ("*", "Usage Log"): "用量日志",

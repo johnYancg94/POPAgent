@@ -21,6 +21,12 @@ RULE_PYTHON_API = (
     "or version behavior are uncertain, call `blender.api_search` and "
     "base the code on the returned official documentation results."
 )
+RULE_WEB_SEARCH = (
+    "Web search rule: when the user asks for current, latest, online, "
+    "news, pricing, product, external documentation, or other web-backed "
+    "information, call `web.search` before answering and cite the returned "
+    "URLs in the answer."
+)
 RULE_NODE_EXPERT = (
     "Blender node expert rule: for material-node tasks, inspect or "
     "validate first with `blender.material.inspect_nodes` or "
@@ -108,6 +114,7 @@ def build_system_prompt(
         base,
         RULE_LIVE_STATE,
         RULE_PYTHON_API,
+        RULE_WEB_SEARCH,
         RULE_NODE_EXPERT,
         RULE_PLANNING,
         RULE_ASK_HUMAN,

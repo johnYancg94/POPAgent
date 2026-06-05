@@ -26,7 +26,7 @@ license = ["SPDX:GPL-2.0-or-later"]
 # For longer explanations use the documentation or detail page.
 # Options are: files, network, clipboard, camera, microphone
 #
-# [permissions]
-# network = "Need to sync motion-capture data to server"
+[permissions]
+network = "Call LLM providers and Tavily web search when requested by the user"
 # files = "Import/export FBX from/to disk"
 # clipboard = "Copy and paste bone transforms"

@@ -341,6 +341,25 @@ class ChatCompanionPreferences(AddonPreferences):
         default=False,
     )
 
+    web_search_enabled: props.BoolProperty(
+        name="Enable Web Search",
+        description="Allow POPAgent to call Tavily when the user asks for online or current information.",
+        default=True,
+    )
+
+    tavily_api_key: props.StringProperty(
+        name="Tavily API Key",
+        description="Tavily API key used by web.search.",
+        subtype="PASSWORD",
+        default="",
+    )
+
+    tavily_endpoint: props.StringProperty(
+        name="Tavily Endpoint",
+        description="Tavily Search API endpoint.",
+        default="https://api.tavily.com/search",
+    )
+
     # endregion
 
     # region connection
@@ -538,6 +557,16 @@ class ChatCompanionPreferences(AddonPreferences):
         api_docs_right.prop(self, "blender_api_docs_url", text="URL")
         api_docs_right.prop(self, "blender_api_docs_path", text="Local")
         api_docs_right.prop(self, "blender_api_docs_prefer_local", text="Prefer Local")
+        web_search_split: UILayout = agent_settings.split(align=True, factor=2 / 5)
+        web_search_left: UILayout = web_search_split.row(align=True)
+        web_search_left.alignment = "RIGHT"
+        web_search_left.label(text="Web Search")
+        web_search_right: UILayout = web_search_split.column(align=True)
+        web_search_right.prop(self, "web_search_enabled", text="Enable")
+        web_search_body: UILayout = web_search_right.column(align=True)
+        web_search_body.enabled = self.web_search_enabled
+        web_search_body.prop(self, "tavily_api_key", text="Tavily API Key")
+        web_search_body.prop(self, "tavily_endpoint", text="Endpoint")
 
         layout.box()
 
