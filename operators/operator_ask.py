@@ -807,7 +807,11 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
             # while telling the model "don't call it" invites the model to
             # hallucinate that the tool does not exist.
             skills = [s for s in skills if s.get("name") != "blender.viewport_screenshot"]
-        threshold = getattr(prefs, "agent_skill_triage_threshold", 60)
+        threshold = getattr(
+            prefs,
+            "agent_skill_triage_threshold",
+            skill_triage.DEFAULT_TRIAGE_THRESHOLD,
+        )
         exposed, catalog = skill_triage.partition_skills(skills, threshold=threshold)
         catalog_text = skill_triage.render_catalog(catalog)
         if catalog_text:

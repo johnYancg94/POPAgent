@@ -46,3 +46,12 @@ def test_render_catalog_groups_by_owner():
 def test_core_names_are_known_skills():
     assert "agent.list_skills" in triage.CORE_SKILL_NAMES
     assert "agent.ask_human" in triage.CORE_SKILL_NAMES
+
+def test_default_threshold_off_for_real_registered_count():
+    # Real registry: 33 builtin + 28 poptools = 61 skills. With multimodal ON
+    # the screenshot skill stays, so the count the operator triages on can be
+    # the full 61. The default must keep triage OFF with margin, not flip on a
+    # single new skill or a multimodal toggle.
+    real_count = 61
+    assert triage.DEFAULT_TRIAGE_THRESHOLD >= real_count
+    assert triage.should_triage(real_count, triage.DEFAULT_TRIAGE_THRESHOLD) is False
