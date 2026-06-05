@@ -22,3 +22,28 @@ def test_history_budget_1m():
 
 def test_history_budget_floor():
     assert cb.history_budget(1000) == 4000
+
+import json as _json
+
+def test_compact_screenshot_elides_base64():
+    payload = {"ok": True, "image_base64": "A" * 50000, "format": "png"}
+    out = cb.compact_tool_result(payload, max_chars=200)
+    assert out["image_base64"] == "<image elided>"
+    assert out["ok"] is True
+    assert out["format"] == "png"
+
+def test_compact_long_json_truncates_but_keeps_status():
+    payload = {"ok": False, "error_kind": "boom", "blob": "x" * 50000}
+    out = cb.compact_tool_result(payload, max_chars=200)
+    assert out["ok"] is False
+    assert out["error_kind"] == "boom"
+    assert "elided" in _json.dumps(out)
+
+def test_compact_small_dict_untouched():
+    payload = {"ok": True, "result": "small"}
+    out = cb.compact_tool_result(payload, max_chars=200)
+    assert out == payload
+
+def test_compact_string_payload_truncated():
+    out = cb.compact_tool_result("y" * 5000, max_chars=100)
+    assert len(out) < 5000 and "elided" in out
