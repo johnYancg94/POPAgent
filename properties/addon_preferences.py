@@ -271,6 +271,20 @@ class ChatCompanionPreferences(AddonPreferences):
         default=5,
     )
 
+    agent_context_window: props.IntProperty(
+        name="Context Window (tokens)",
+        description="Model context window in tokens; history is trimmed to fit a budget derived from this. Default 256k.",
+        min=8000,
+        max=2_000_000,
+        default=256000,
+    )
+
+    agent_context_1m_enabled: props.BoolProperty(
+        name="Enable 1M Context",
+        description="Use a 1,000,000-token budget ceiling for models that support million-token context. Only effective if the selected model actually supports it.",
+        default=False,
+    )
+
     # region usage log (append-only JSONL sink for team-wide aggregation)
     trace_log_enabled: props.BoolProperty(
         name="Log Agent Usage",
