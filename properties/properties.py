@@ -99,6 +99,13 @@ class ChatCompanionProperties(PropertyGroup):
         update=PropertyUpdates.update_ui,
     )
 
+    answer_object_results: StringProperty(
+        name="Answer Object Results",
+        description="JSON object results parsed from the current agent answer",
+        default="",
+        update=PropertyUpdates.update_ui,
+    )
+
     expanded_answer_code_indices: StringProperty(
         name="Expanded Answer Code Blocks",
         description="Comma-separated answer code block indices expanded in the UI",

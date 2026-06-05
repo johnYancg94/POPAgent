@@ -21,7 +21,7 @@ from ..operators.operator_open_prefs import CHAT_COMPANION_OT_open_prefs
 from ..operators.operator_website import CHAT_COMPANION_OT_website
 from ..operators.operator_change_llm import CHAT_COMPANION_OT_select_mimo
 from ..operators.operator_change_llm import CHAT_COMPANION_OT_select_open_ai
-from ..operators.operator_select_anthropic import CHAT_COMPANION_OT_select_anthropic
+from ..operators.operator_select_minimax import CHAT_COMPANION_OT_select_minimax
 from ..operators.operator_full_version import CHAT_COMPANION_OT_full_version
 from ..operators.operator_image_attachments import (
     CHAT_COMPANION_OT_add_blender_image,
@@ -108,10 +108,10 @@ class CHAT_COMPANION_PT_prompt(POLYGONINGENIEUR_panel, Panel):
             llms_full.enabled = False
 
         llms.operator(
-            operator=CHAT_COMPANION_OT_select_anthropic.bl_idname,
-            text="Claude",
+            operator=CHAT_COMPANION_OT_select_minimax.bl_idname,
+            text="minimax",
             icon_value=pcoll["anthropic_icon"].icon_id,
-            depress=True if prefs.llm_organization == "anthropic" else False,
+            depress=True if prefs.llm_organization == "minimax" else False,
         )
 
         # ! openai
@@ -146,15 +146,15 @@ class CHAT_COMPANION_PT_prompt(POLYGONINGENIEUR_panel, Panel):
             )
             model_info_link.url = "https://api-docs.deepseek.com/api/create-chat-completion"
 
-        # ! anthropic
-        elif prefs.llm_organization == "anthropic":
-            claude_model_container: UILayout = llm_selection.column(align=True)
-            claude_model_selection = claude_model_container.row(align=True)
-            claude_model_selection.prop(prefs, "anthropic_model", text="")
-            model_info_link = claude_model_selection.operator(
+        # ! minimax (Anthropic-Messages-API compatible)
+        elif prefs.llm_organization == "minimax":
+            minimax_model_container: UILayout = llm_selection.column(align=True)
+            minimax_model_selection = minimax_model_container.row(align=True)
+            minimax_model_selection.prop(prefs, "minimax_model", text="")
+            model_info_link = minimax_model_selection.operator(
                 operator=CHAT_COMPANION_OT_website.bl_idname, text="", icon="QUESTION"
             )
-            model_info_link.url = "https://docs.anthropic.com/en/api"
+            model_info_link.url = "https://platform.minimaxi.com/docs/llms.txt"
 
         # ! API key info
         api_key: str | None = None
@@ -164,8 +164,8 @@ class CHAT_COMPANION_PT_prompt(POLYGONINGENIEUR_panel, Panel):
             api_key = prefs.mimo_api_key
         elif prefs.llm_organization == "deepseek":
             api_key = prefs.deepseek_api_key
-        elif prefs.llm_organization == "anthropic":
-            api_key = prefs.anthropic_api_key
+        elif prefs.llm_organization == "minimax":
+            api_key = prefs.minimax_api_key
 
         no_api_key = api_key is None or len(api_key) == 0 or api_key == ""
         if no_api_key:
@@ -346,6 +346,6 @@ def _provider_for_prefs(prefs):
         return OpenAICompatProvider("mimo")
     if prefs.llm_organization == "deepseek":
         return OpenAICompatProvider("deepseek")
-    if prefs.llm_organization == "anthropic":
+    if prefs.llm_organization == "minimax":
         return AnthropicProvider()
     return None

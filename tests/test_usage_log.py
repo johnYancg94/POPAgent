@@ -52,7 +52,7 @@ def _episode(trace, **kw):
         trace=trace,
         user_id="u1",
         env={"blender": "5.1"},
-        llm={"org": "anthropic", "model": "x", "mode": "agent"},
+        llm={"org": "minimax", "model": "x", "mode": "agent"},
         prompt="导出选中物体为fbx",
         cost={"total_tokens": 100},
         now=_NOW,

@@ -13,6 +13,7 @@
 
 
 import json
+import bpy
 from bpy.types import Panel, UILayout, Context
 from ..utils import cc_globals
 from ..operators.operator_copy import CHAT_COMPANION_OT_copy
@@ -21,11 +22,13 @@ from ..operators.operator_website import CHAT_COMPANION_OT_website
 from ..operators.operator_copy_error import CHAT_COMPANION_OT_copy_error
 from ..operators.operator_answer_view import CHAT_COMPANION_OT_open_answer_text
 from ..operators.operator_answer_view import CHAT_COMPANION_OT_toggle_answer_code
+from ..operators.operator_answer_view import CHAT_COMPANION_OT_select_answer_object
 from ..operators.operator_ask import CHAT_COMPANION_OT_ask
 from ..operators.operator_feedback import CHAT_COMPANION_OT_rate_answer
 from ..utils.utils import wrap_string_to_panel
 from ..utils.utils import wrap_array
 from ..utils.utils import can_send_prompt
+from ..utils.structured_results import object_result_status
 from .panel import POLYGONINGENIEUR_panel
 from ..properties.properties import ChatCompanionProperties
 from ..properties.addon_preferences import ChatCompanionPreferences
@@ -108,6 +111,7 @@ class CHAT_COMPANION_PT_output(POLYGONINGENIEUR_panel, Panel):
             self.draw_raw_answer(context, layout, chat_properties.answer)
             if addon_preferences.developer_mode:
                 self.draw_selected_execution_trace(context, layout, chat_properties)
+            self.draw_object_results(context, layout, chat_properties)
             self.draw_feedback(context, layout, chat_properties)
             return
 
@@ -448,6 +452,8 @@ class CHAT_COMPANION_PT_output(POLYGONINGENIEUR_panel, Panel):
         if addon_preferences.developer_mode:
             self.draw_selected_execution_trace(context, layout, chat_properties)
 
+        self.draw_object_results(context, layout, chat_properties)
+
         # ! copy complete answer
         has_content: bool = bool(chat_properties.answer)
         if has_content:
@@ -619,6 +625,96 @@ class CHAT_COMPANION_PT_output(POLYGONINGENIEUR_panel, Panel):
         raw_box.scale_y = 0.58
         for line in wrap_string_to_panel(context=context, string=answer, linebreak=True):
             raw_box.label(text=line)
+
+    def draw_object_results(
+        self,
+        context: Context,
+        layout: UILayout,
+        chat_properties: ChatCompanionProperties,
+    ):
+        objects = self.parse_object_results(chat_properties.answer_object_results)
+        if not objects:
+            return
+
+        layout.separator(factor=0.4)
+        result_box = layout.box()
+        header = result_box.row(align=True)
+        header.label(text=f"Objects Found ({len(objects)})", icon="OUTLINER_OB_MESH")
+
+        object_names = {obj.name for obj in bpy.data.objects}
+        view_layer_objects = getattr(context.view_layer, "objects", [])
+        view_layer_object_names = {obj.name for obj in view_layer_objects}
+        unselectable_names = {
+            obj.name
+            for obj in bpy.data.objects
+            if obj.name in view_layer_object_names and getattr(obj, "hide_select", False)
+        }
+        for result in objects:
+            status = object_result_status(
+                result,
+                object_names,
+                view_layer_object_names,
+                unselectable_names,
+            )
+            row = result_box.row(align=True)
+            select_object = row.operator(
+                operator=CHAT_COMPANION_OT_select_answer_object.bl_idname,
+                text="",
+                icon=self.object_result_icon(status),
+            )
+            select_object.object_name = result.get("name", "")
+
+            label = self.format_object_result_label(result, status)
+            row.enabled = status != "MISSING"
+            row.label(text=label)
+
+    def parse_object_results(self, raw_json: str) -> list:
+        if not raw_json:
+            return []
+        try:
+            data = json.loads(raw_json)
+        except (TypeError, json.JSONDecodeError):
+            return []
+        if not isinstance(data, dict) or data.get("version") != 1:
+            return []
+        objects = data.get("objects")
+        if not isinstance(objects, list):
+            return []
+        return [item for item in objects if isinstance(item, dict) and item.get("name")]
+
+    def format_object_result_label(self, result: dict, status: str) -> str:
+        name = str(result.get("name") or "")
+        obj_type = str(result.get("type") or "").strip()
+        location = result.get("location")
+        note = str(result.get("note") or "").strip()
+
+        bits = [name]
+        if obj_type:
+            bits.append(obj_type)
+        if isinstance(location, list) and len(location) == 3:
+            bits.append(
+                "loc "
+                + ", ".join(
+                    f"{value:.3g}" if isinstance(value, (int, float)) else str(value)
+                    for value in location
+                )
+            )
+        if note:
+            bits.append(note)
+        if status == "MISSING":
+            bits.append("Missing")
+        elif status == "OUT_OF_VIEW_LAYER":
+            bits.append("Out of ViewLayer")
+        elif status == "UNSELECTABLE":
+            bits.append("Unselectable")
+        return " | ".join(bits)
+
+    def object_result_icon(self, status: str) -> str:
+        if status == "FOUND":
+            return "RESTRICT_SELECT_OFF"
+        if status == "MISSING":
+            return "ERROR"
+        return "OUTLINER"
 
     def parse_expanded_indices(self, value: str) -> set:
         indices = set()

@@ -48,8 +48,8 @@ def get_current_model(prefs) -> str:
         return getattr(prefs, "mimo_model", "")
     if org == "deepseek":
         return getattr(prefs, "deepseek_model", "")
-    if org == "anthropic":
-        return getattr(prefs, "anthropic_model", "")
+    if org == "minimax":
+        return getattr(prefs, "minimax_model", "")
     return ""
 
 

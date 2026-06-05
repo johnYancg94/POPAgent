@@ -26,6 +26,7 @@ class HistoryPropertyGroup(bpy.types.PropertyGroup):
     user_prompt: bpy.props.StringProperty()
     answer: bpy.props.StringProperty()
     answer_parts: bpy.props.StringProperty()
+    answer_object_results: bpy.props.StringProperty(default="")
     icon: bpy.props.StringProperty()
     is_favorite: bpy.props.BoolProperty()
     is_enabled: bpy.props.BoolProperty(

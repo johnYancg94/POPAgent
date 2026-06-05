@@ -21,7 +21,7 @@ def test_all_new_skills_registered_in_init():
         "HEALTH_CHECK", "SAVE_FILE", "UNDO", "REDO",
         "TRANSFORM_SET", "TRANSFORM_APPLY", "TRANSFORM_SET_ORIGIN",
         "DELETE_OBJECTS", "DUPLICATE_OBJECT", "PARENT_OBJECTS",
-        "ORGANIZE_COLLECTION", "LIST_SKILLS",
+        "ORGANIZE_COLLECTION", "LIST_SKILLS", "OBJECT_RESULTS",
     ):
         assert symbol in text, f"{symbol} not wired into builtin_skills/__init__.py"
 
@@ -33,6 +33,7 @@ def test_skill_names_use_blender_agent_domains():
         "builtin_skills/blender_edit.py": "blender.edit.undo",
         "builtin_skills/blender_transform.py": "blender.transform.set",
         "builtin_skills/blender_object.py": "blender.object.delete",
+        "builtin_skills/blender_object_results.py": "blender.object_results",
         "builtin_skills/agent_meta.py": "agent.list_skills",
     }
     for path, name in names.items():
@@ -59,7 +60,11 @@ def test_file_save_and_delete_require_confirmation_always():
 
 
 def test_meta_and_diagnostic_skills_are_read_only():
-    for path in ("builtin_skills/agent_meta.py", "builtin_skills/blender_mesh.py"):
+    for path in (
+        "builtin_skills/agent_meta.py",
+        "builtin_skills/blender_mesh.py",
+        "builtin_skills/blender_object_results.py",
+    ):
         text = _read(path)
         assert '"modifies_scene": False' in text
         assert '"writes_files": False' in text

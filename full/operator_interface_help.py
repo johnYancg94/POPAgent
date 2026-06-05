@@ -38,6 +38,8 @@ class CHAT_COMPANION_OT_interface_help(bpy.types.Operator):
             api_key = addon_preferences.open_ai_api_key
         elif addon_preferences.llm_organization == "deepseek":
             api_key = addon_preferences.deepseek_api_key
+        elif addon_preferences.llm_organization == "minimax":
+            api_key = addon_preferences.minimax_api_key
 
         no_api_key = api_key is None or len(api_key) == 0 or api_key == ""
         desciption = "This will automatically ask POPAgent about this setting/tool, what it is for and how to use it in python"

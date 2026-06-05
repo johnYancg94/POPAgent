@@ -37,6 +37,7 @@ class CHAT_COMPANION_OT_add_history_item(Operator):
     prompt: bpy.props.StringProperty()
     answer: bpy.props.StringProperty()
     parts: bpy.props.StringProperty()
+    object_results: bpy.props.StringProperty(default="")
     is_favorite: bpy.props.BoolProperty(default=False)
     is_enabled: bpy.props.BoolProperty(default=True)
     llm_organization: bpy.props.StringProperty()
@@ -71,6 +72,7 @@ class CHAT_COMPANION_OT_add_history_item(Operator):
         history_item.user_prompt = self.prompt
         history_item.answer = self.answer
         history_item.answer_parts = self.parts
+        history_item.answer_object_results = self.object_results
         history_item.is_favorite = self.is_favorite
         history_item.icon = "VIEWZOOM"
         history_item.llm_organization = prefs.llm_organization
@@ -166,6 +168,7 @@ class CHAT_COMPANION_OT_delete_history_item(Operator):
                         "user_prompt": history_item.user_prompt,
                         "answer": history_item.answer,
                         "answer_parts": history_item.answer_parts,
+                        "answer_object_results": history_item.answer_object_results,
                         "is_favorite": history_item.is_favorite,
                         "llm_organization": history_item.llm_organization,
                         "tool_calls_json": history_item.tool_calls_json,
@@ -196,6 +199,7 @@ class CHAT_COMPANION_OT_delete_history_item(Operator):
                 prompt=item_to_keep["user_prompt"],
                 answer=item_to_keep["answer"],
                 parts=item_to_keep["answer_parts"],
+                object_results=item_to_keep["answer_object_results"],
                 is_favorite=item_to_keep["is_favorite"],
                 is_error=item_to_keep["is_error"],
                 llm_organization=item_to_keep["llm_organization"],
@@ -222,6 +226,7 @@ class CHAT_COMPANION_OT_delete_history_item(Operator):
             cc_globals.request_failed = False
             props.answer = ""
             props.answer_parts = ""
+            props.answer_object_results = ""
             props.error_button_icon = ""
             props.error_button_text = ""
             props.error_button_content = ""
@@ -267,6 +272,7 @@ class CHAT_COMPANION_OT_clear_history(Operator):
                         "user_prompt": item.user_prompt,
                         "answer": item.answer,
                         "answer_parts": item.answer_parts,
+                        "answer_object_results": item.answer_object_results,
                         "is_favorite": item.is_favorite,
                         "llm_organization": item.llm_organization,
                         "tool_calls_json": item.tool_calls_json,
@@ -296,6 +302,7 @@ class CHAT_COMPANION_OT_clear_history(Operator):
                 prompt=fav["user_prompt"],
                 answer=fav["answer"],
                 parts=fav["answer_parts"],
+                object_results=fav["answer_object_results"],
                 is_favorite=fav["is_favorite"],
                 llm_organization=fav["llm_organization"],
                 tool_calls_json=fav["tool_calls_json"],
@@ -319,6 +326,7 @@ class CHAT_COMPANION_OT_clear_history(Operator):
             cc_globals.request_failed = False
             chat_properties.answer = ""
             chat_properties.answer_parts = ""
+            chat_properties.answer_object_results = ""
             chat_properties.error_button_icon = ""
             chat_properties.error_button_text = ""
             chat_properties.error_button_content = ""

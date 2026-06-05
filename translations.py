@@ -49,7 +49,7 @@ _zh = {
         ("*", "MiMo API key"): "MiMo API 密钥",
         ("*", "Model"): "模型",
         ("*", "DeepSeek API key"): "DeepSeek API 密钥",
-        ("*", "Anthropic (Claude) API key"): "Anthropic (Claude) API 密钥",
+        ("*", "minimax API key"): "minimax API 密钥",
 
         # --- 显示 ---
         ("*", "Display"): "显示",

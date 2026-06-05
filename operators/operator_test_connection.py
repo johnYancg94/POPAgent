@@ -48,7 +48,7 @@ def _provider_for_prefs(prefs):
         return OpenAICompatProvider("mimo")
     if org == "deepseek":
         return OpenAICompatProvider("deepseek")
-    if org == "anthropic":
+    if org == "minimax":
         return AnthropicProvider()
     return None
 
@@ -61,8 +61,8 @@ def _api_key_for_prefs(prefs) -> str:
         return getattr(prefs, "mimo_api_key", "")
     if org == "deepseek":
         return getattr(prefs, "deepseek_api_key", "")
-    if org == "anthropic":
-        return getattr(prefs, "anthropic_api_key", "")
+    if org == "minimax":
+        return getattr(prefs, "minimax_api_key", "")
     return ""
 
 

@@ -305,6 +305,8 @@ def can_send_prompt(context):
         api_key = addon_preferences.mimo_api_key
     elif addon_preferences.llm_organization == "deepseek":
         api_key = addon_preferences.deepseek_api_key
+    elif addon_preferences.llm_organization == "minimax":
+        api_key = addon_preferences.minimax_api_key
 
     no_api_key = api_key is None or len(api_key) == 0 or api_key == ""
     chat_properties = context.scene.chat_companion_properties

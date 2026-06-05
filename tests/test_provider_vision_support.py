@@ -28,7 +28,7 @@ AnthropicProvider = sys.modules["providers.anthropic"].AnthropicProvider
 class _Prefs:
     open_ai_model = ""
     deepseek_model = ""
-    anthropic_model = ""
+    minimax_model = ""
 
 
 def test_non_deepseek_openai_compatible_models_default_to_image_input():
@@ -47,17 +47,26 @@ def test_deepseek_does_not_support_image_input():
     assert not OpenAICompatProvider("deepseek").supports_image_input(prefs)
 
 
-def test_anthropic_claude_supports_image_input():
+def test_minimax_supports_image_input():
     prefs = _Prefs()
-    prefs.anthropic_model = "claude-sonnet-4-6"
+    prefs.minimax_model = "MiniMax-M3"
 
     assert AnthropicProvider().supports_image_input(prefs)
+
+
+def test_minimax_unknown_model_defaults_to_no_image_input():
+    """Empty / unknown model names must not silently claim vision support."""
+    prefs = _Prefs()
+    prefs.minimax_model = ""
+
+    assert not AnthropicProvider().supports_image_input(prefs)
 
 
 def run():
     test_non_deepseek_openai_compatible_models_default_to_image_input()
     test_deepseek_does_not_support_image_input()
-    test_anthropic_claude_supports_image_input()
+    test_minimax_supports_image_input()
+    test_minimax_unknown_model_defaults_to_no_image_input()
     print("test_provider_vision_support OK")
     return True
 

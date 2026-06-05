@@ -40,6 +40,8 @@ class CHAT_COMPANION_OT_autocomplete(bpy.types.Operator):
             api_key = addon_preferences.open_ai_api_key
         elif addon_preferences.llm_organization == "deepseek":
             api_key = addon_preferences.deepseek_api_key
+        elif addon_preferences.llm_organization == "minimax":
+            api_key = addon_preferences.minimax_api_key
 
         no_api_key = api_key is None or len(api_key) == 0 or api_key == ""
         desciption = "Ask POPAgent to turn your selected comments into code. A comment is for example: # add cube"

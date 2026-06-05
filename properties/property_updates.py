@@ -112,6 +112,7 @@ class PropertyUpdates:
             self.user_prompt = history_item.user_prompt
             self.answer = history_item.answer
             self.answer_parts = history_item.answer_parts
+            self.answer_object_results = history_item.answer_object_results
             self.expanded_answer_code_indices = ""
 
             cc_globals.request_failed = history_item.is_error
@@ -182,7 +183,7 @@ class PropertyUpdates:
             provider = OpenAICompatProvider("mimo")
         elif org == "deepseek":
             provider = OpenAICompatProvider("deepseek")
-        elif org == "anthropic":
+        elif org == "minimax":
             provider = AnthropicProvider()
         else:
             # Fallback: try full-version handler for unknown providers, then bail.

@@ -50,9 +50,9 @@ class ChatCompanionPreferences(AddonPreferences):
             "...",
         ),
         (
-            "anthropic",
-            "Anthropic (Claude)",
-            "...",
+            "minimax",
+            "minimax",
+            "Anthropic Messages API compatible (M3 / M2.7)",
         ),
     )
 
@@ -88,9 +88,8 @@ class ChatCompanionPreferences(AddonPreferences):
         "gpt-5.4-mini": 128000,
         "deepseek-v4-pro": 128000,
         "deepseek-v4-flash": 128000,
-        "claude-sonnet-4-6": 200000,
-        "claude-opus-4-7": 200000,
-        "claude-haiku-4-5-20251001": 200000,
+        "MiniMax-M3": 200000,
+        "MiniMax-M2.7": 200000,
     }
 
     _answer_display_modes = (
@@ -150,28 +149,31 @@ class ChatCompanionPreferences(AddonPreferences):
         default="https://api.deepseek.com",
     )
 
-    anthropic_api_key: props.StringProperty(
+    minimax_api_key: props.StringProperty(
         name="API Key",
-        description="Your Anthropic API key for Claude models",
+        description="Your minimax API key (Anthropic Messages API compatible)",
     )
 
-    anthropic_base_url: props.StringProperty(
+    minimax_base_url: props.StringProperty(
         name="Base URL",
-        description="Anthropic API base URL",
-        default="https://api.anthropic.com/v1",
+        description=(
+            "minimax Anthropic-compatible base URL. The addon appends "
+            "/messages, so the path must end with the API version (e.g. /v1) "
+            "to match the Anthropic SDK's behavior."
+        ),
+        default="https://api.minimaxi.com/anthropic/v1",
     )
 
-    _anthropic_models = (
-        ("claude-sonnet-4-6", "Claude Sonnet 4.6", "claude-sonnet-4-6"),
-        ("claude-opus-4-7", "Claude Opus 4.7", "claude-opus-4-7"),
-        ("claude-haiku-4-5-20251001", "Claude Haiku 4.5", "claude-haiku-4-5-20251001"),
+    _minimax_models = (
+        ("MiniMax-M3", "MiniMax-M3", "MiniMax-M3 (flagship)"),
+        ("MiniMax-M2.7", "MiniMax-M2.7", "MiniMax-M2.7 (fast)"),
     )
 
-    anthropic_model: props.EnumProperty(
-        name="Select Claude model:",
-        description="Choose which Anthropic Claude model to use",
-        items=_anthropic_models,
-        default="claude-sonnet-4-6",
+    minimax_model: props.EnumProperty(
+        name="Select minimax model:",
+        description="Choose which minimax model to use",
+        items=_minimax_models,
+        default="MiniMax-M3",
         update=PropertyUpdates.update_llm_details,
     )
 
@@ -445,20 +447,20 @@ class ChatCompanionPreferences(AddonPreferences):
 
         api_keys_text_fields.separator()
 
-        # ! anthropic claude
-        claude_split: UILayout = api_keys_text_fields.split(align=True, factor=2 / 5)
-        claude_left: UILayout = claude_split.row(align=True)
-        claude_left.alignment = "RIGHT"
-        claude_left.label(text="Anthropic (Claude) API key", icon_value=pcoll["anthropic_icon"].icon_id)
-        claude_right: UILayout = claude_split.column(align=True)
-        claude_right.prop(self, "anthropic_api_key", text="")
-        claude_right.prop(self, "anthropic_base_url", text="Base URL")
-        claude_right.prop(self, "anthropic_model", text="Model")
-        claude_buttons: UILayout = claude_right.row(align=True)
-        claude_key_website: CHAT_COMPANION_OT_website = claude_buttons.operator(
+        # ! minimax (Anthropic-Messages-API compatible)
+        minimax_split: UILayout = api_keys_text_fields.split(align=True, factor=2 / 5)
+        minimax_left: UILayout = minimax_split.row(align=True)
+        minimax_left.alignment = "RIGHT"
+        minimax_left.label(text="minimax API key", icon_value=pcoll["anthropic_icon"].icon_id)
+        minimax_right: UILayout = minimax_split.column(align=True)
+        minimax_right.prop(self, "minimax_api_key", text="")
+        minimax_right.prop(self, "minimax_base_url", text="Base URL")
+        minimax_right.prop(self, "minimax_model", text="Model")
+        minimax_buttons: UILayout = minimax_right.row(align=True)
+        minimax_key_website: CHAT_COMPANION_OT_website = minimax_buttons.operator(
             operator=CHAT_COMPANION_OT_website.bl_idname, text="Get key", icon="KEY_HLT"
         )
-        claude_key_website.url = "https://console.anthropic.com/account/keys"
+        minimax_key_website.url = "https://platform.minimaxi.com/user-center/payment/token-plan"
 
         # ! display
         display_settings = layout.column(align=True)

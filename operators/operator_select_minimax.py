@@ -19,10 +19,13 @@ from ..properties.addon_preferences import ChatCompanionPreferences
 from .. import __package__ as base_package
 
 
-class CHAT_COMPANION_OT_select_anthropic(Operator):
+class CHAT_COMPANION_OT_select_minimax(Operator):
+    # bl_idname kept as select_anthropic so any pre-existing keymap
+    # entries (addon_keymaps / user shortcuts) still resolve after the
+    # provider rename.
     bl_idname = "chat_companion.select_anthropic"
-    bl_label = "Anthropic"
-    bl_description = "Anthropic (Claude) models including Claude Sonnet, Opus, and Haiku"
+    bl_label = "minimax"
+    bl_description = "minimax M3 / M2.7 (Anthropic Messages API compatible)"
     bl_options = {"REGISTER", "INTERNAL"}
 
     def execute(self, context):
@@ -31,6 +34,6 @@ class CHAT_COMPANION_OT_select_anthropic(Operator):
         ].preferences
 
         # triggers PropertyUpdate.update_llm_details
-        prefs.llm_organization = "anthropic"
+        prefs.llm_organization = "minimax"
 
         return {"FINISHED"}

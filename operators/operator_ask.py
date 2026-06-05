@@ -36,6 +36,10 @@ from ..utils.utils import (
     construct_parts,
     get_system_info,
 )
+from ..utils.structured_results import (
+    merge_object_results_json,
+    split_structured_results,
+)
 from ..utils.usage_stats import add_usage_record, get_current_model
 from urllib.parse import quote
 from ..properties.properties import ChatCompanionProperties
@@ -140,8 +144,8 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
             api_key = addon_preferences.mimo_api_key
         elif addon_preferences.llm_organization == "deepseek":
             api_key = addon_preferences.deepseek_api_key
-        elif addon_preferences.llm_organization == "anthropic":
-            api_key = getattr(addon_preferences, "anthropic_api_key", "")
+        elif addon_preferences.llm_organization == "minimax":
+            api_key = getattr(addon_preferences, "minimax_api_key", "")
 
         no_api_key: bool = api_key is None or len(api_key) == 0 or api_key == ""
         desciption: str = (
@@ -207,6 +211,7 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
             # UI updates to the new answer.
             answer="",
             answer_parts="",
+            answer_object_results="",
             expanded_answer_code_indices="",
             waiting_string="",
             waiting_icon="BLANK1",
@@ -221,6 +226,7 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         cc_globals.request_failed = False
         self._usage_recorded = False
         self._active_trace = None
+        self._pending_object_results = ""
         self._request_started_at = time.perf_counter()
         self._turn_cost = {
             "input_tokens": 0,
@@ -280,6 +286,7 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         # updates to the new answer.
         props.answer = ""
         props.answer_parts = ""
+        props.answer_object_results = ""
         props.expanded_answer_code_indices = ""
         props.waiting_string = ""
         props.waiting_icon = "BLANK1"
@@ -739,12 +746,14 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         props = bpy.context.scene.chat_companion_properties
         props.answer = parts
         props.answer_parts = json.dumps(answer_parts)
+        props.answer_object_results = ""
 
         bpy.ops.chat_companion.add_history_item(
             display_name=self.user_prompt,
             prompt=self.user_prompt,
             answer=parts,
             parts=json.dumps(answer_parts),
+            object_results="",
             is_favorite=False,
         )
 
@@ -777,7 +786,7 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
             provider = OpenAICompatProvider("mimo")
         elif org == "deepseek":
             provider = OpenAICompatProvider("deepseek")
-        elif org == "anthropic":
+        elif org == "minimax":
             provider = AnthropicProvider()
         else:
             self.show_general_error(context, solution=f"Provider '{org}' not supported in agent mode.")
@@ -911,7 +920,7 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
 
         for iteration in range(max_iters):
             # Build provider-specific wire payload.
-            if org == "anthropic":
+            if org == "minimax":
                 system_for_wire, messages = mb.to_anthropic(
                     system_text,
                     tool_name_mapper=provider._to_wire_tool_name,
@@ -1088,6 +1097,7 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                         result=result,
                         duration_ms=duration_ms,
                     )
+                    self._collect_object_results(tc.name, result)
 
                 # Continue loop for next LLM turn.
                 continue
@@ -1268,6 +1278,7 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
             prompt=self.user_prompt,
             answer=answer_content,
             parts=props.answer_parts,
+            object_results=props.answer_object_results,
             is_favorite=False,
         )
 
@@ -1346,9 +1357,15 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         props = ctx.scene.chat_companion_properties
         prefs = ctx.preferences.addons[base_package].preferences
 
-        answer_parts = parse_llm_content(final_text)
-        props.answer = final_text
+        visible_text, fallback_object_results = split_structured_results(final_text)
+        object_results = merge_object_results_json(
+            getattr(self, "_pending_object_results", ""),
+            fallback_object_results,
+        )
+        answer_parts = parse_llm_content(visible_text)
+        props.answer = visible_text
         props.answer_parts = json.dumps(answer_parts)
+        props.answer_object_results = object_results
 
         tool_calls_json = json.dumps(
             trace or getattr(self, "_active_trace", None) or [],
@@ -1357,8 +1374,9 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         bpy.ops.chat_companion.add_history_item(
             display_name=self.user_prompt,
             prompt=self.user_prompt,
-            answer=final_text,
+            answer=visible_text,
             parts=json.dumps(answer_parts),
+            object_results=object_results,
             is_favorite=False,
             tool_calls_json=tool_calls_json,
         )
@@ -1367,6 +1385,17 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         props.is_connecting = False
         self.report({"INFO"}, "Agent finished.")
         self._write_usage_log(ctx, prefs, trace)
+
+    def _collect_object_results(self, tool_name: str, result: dict) -> None:
+        if tool_name != "blender.object_results" or not isinstance(result, dict):
+            return
+        object_results_json = result.get("object_results_json", "")
+        if not object_results_json:
+            return
+        self._pending_object_results = merge_object_results_json(
+            getattr(self, "_pending_object_results", ""),
+            object_results_json,
+        )
 
     def _write_usage_log(self, context, prefs, trace) -> None:
         """Append one JSONL line for this turn. Never breaks the turn on error."""
@@ -1471,6 +1500,7 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         chat_properties.answer_parts = json.dumps(
             [{"type": "text", "content": [answer]}]
         )
+        chat_properties.answer_object_results = ""
 
         # ! add error to history
         bpy.ops.chat_companion.add_history_item(
@@ -1549,6 +1579,7 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         chat_properties.answer_parts = json.dumps(
             [{"type": "text", "content": [answer]}]
         )
+        chat_properties.answer_object_results = ""
 
         # ! add error to history
         bpy.ops.chat_companion.add_history_item(
@@ -1623,6 +1654,7 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         chat_properties.answer_parts = json.dumps(
             [{"type": "text", "content": [answer]}]
         )
+        chat_properties.answer_object_results = ""
 
         # ! add error to history
         bpy.ops.chat_companion.add_history_item(
@@ -1695,6 +1727,7 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         chat_properties.answer_parts = json.dumps(
             [{"type": "text", "content": [answer]}]
         )
+        chat_properties.answer_object_results = ""
         chat_properties.waiting_for_answer = False
 
         # ! add error to history

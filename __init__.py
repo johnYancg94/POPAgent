@@ -44,6 +44,7 @@ from .operators.operator_copy import CHAT_COMPANION_OT_copy
 from .operators.operator_copy_error import CHAT_COMPANION_OT_copy_error
 from .operators.operator_answer_view import CHAT_COMPANION_OT_open_answer_text
 from .operators.operator_answer_view import CHAT_COMPANION_OT_toggle_answer_code
+from .operators.operator_answer_view import CHAT_COMPANION_OT_select_answer_object
 from .operators.operator_open_prefs import CHAT_COMPANION_OT_open_prefs
 from .operators.operator_website import CHAT_COMPANION_OT_website
 from .operators.operator_full_version import CHAT_COMPANION_OT_full_version
@@ -60,7 +61,7 @@ from .operators.operator_feedback import CHAT_COMPANION_OT_rate_answer
 from .operators.operator_install_deps import CHAT_COMPANION_OT_install_deps
 from .operators.operator_change_llm import CHAT_COMPANION_OT_select_mimo
 from .operators.operator_change_llm import CHAT_COMPANION_OT_select_open_ai
-from .operators.operator_select_anthropic import CHAT_COMPANION_OT_select_anthropic
+from .operators.operator_select_minimax import CHAT_COMPANION_OT_select_minimax
 from .operators.operator_skills import (
     POPAGENT_OT_toggle_skill,
     POPAGENT_OT_clear_session_trust,
@@ -132,6 +133,7 @@ classes = (
     CHAT_COMPANION_OT_copy_error,
     CHAT_COMPANION_OT_open_answer_text,
     CHAT_COMPANION_OT_toggle_answer_code,
+    CHAT_COMPANION_OT_select_answer_object,
     CHAT_COMPANION_OT_open_prefs,
     CHAT_COMPANION_OT_website,
     CHAT_COMPANION_OT_full_version,
@@ -148,7 +150,7 @@ classes = (
     CHAT_COMPANION_OT_install_deps,
     CHAT_COMPANION_OT_select_mimo,
     CHAT_COMPANION_OT_select_open_ai,
-    CHAT_COMPANION_OT_select_anthropic,
+    CHAT_COMPANION_OT_select_minimax,
     POPAGENT_OT_confirm_skill,
     POPAGENT_OT_toggle_skill,
     POPAGENT_OT_clear_session_trust,

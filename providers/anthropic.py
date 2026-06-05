@@ -5,19 +5,25 @@ _ANTHROPIC_API_VERSION = "2023-06-01"
 
 
 class AnthropicProvider(BaseProvider):
-    """Anthropic Claude Messages API."""
+    """Anthropic Messages API.
+
+    Also drives the minimax provider, which speaks the same wire protocol at
+    a different base URL. Property names and the default base URL are written
+    so the same class serves both; new compatible providers only need to be
+    added to the organization enum + their own property keys.
+    """
 
     def get_api_key(self, prefs) -> str:
-        return getattr(prefs, "anthropic_api_key", "")
+        return getattr(prefs, "minimax_api_key", "")
 
     def get_url(self, prefs) -> str:
-        base = getattr(prefs, "anthropic_base_url", "https://api.anthropic.com/v1")
+        base = getattr(prefs, "minimax_base_url", "https://api.minimaxi.com/anthropic/v1")
         return base.rstrip("/") + "/messages"
 
     def connectivity_request(self, prefs) -> tuple[str, str, dict]:
         """Token-free reachability probe: GET /models validates network, base
         URL and API key auth without spending any inference tokens."""
-        base = getattr(prefs, "anthropic_base_url", "https://api.anthropic.com/v1")
+        base = getattr(prefs, "minimax_base_url", "https://api.minimaxi.com/anthropic/v1")
         url = base.rstrip("/") + "/models"
         headers = {
             "x-api-key": self.get_api_key(prefs),
@@ -34,7 +40,7 @@ class AnthropicProvider(BaseProvider):
         }
 
     def get_payload(self, prefs) -> dict:
-        model = getattr(prefs, "anthropic_model", "claude-sonnet-4-6")
+        model = getattr(prefs, "minimax_model", "MiniMax-M3")
         return {
             "model": model,
             "max_tokens": 8096,
@@ -70,7 +76,7 @@ class AnthropicProvider(BaseProvider):
                       system: str = "", stream: bool = False) -> tuple[str, dict, dict]:
         url = self.get_url(prefs)
         headers = self.get_headers(prefs)
-        model = getattr(prefs, "anthropic_model", "claude-sonnet-4-6")
+        model = getattr(prefs, "minimax_model", "MiniMax-M3")
         body: dict = {
             "model": model,
             "max_tokens": 8096,
@@ -115,8 +121,8 @@ class AnthropicProvider(BaseProvider):
         return True
 
     def supports_image_input(self, prefs) -> bool:
-        model = str(getattr(prefs, "anthropic_model", "")).lower()
-        return model.startswith("claude-")
+        model = str(getattr(prefs, "minimax_model", "")).lower()
+        return model.startswith("minimax-")
 
     def create_stream_parser(self) -> "AnthropicStreamParser":
         return AnthropicStreamParser(getattr(self, "_tool_wire_to_skill_name", {}).copy())
