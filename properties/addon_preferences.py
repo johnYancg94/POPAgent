@@ -285,6 +285,14 @@ class ChatCompanionPreferences(AddonPreferences):
         default=False,
     )
 
+    agent_skill_triage_threshold: props.IntProperty(
+        name="Skill Triage Threshold",
+        description="When the number of enabled skills exceeds this, expose only core skills as tools and offer the rest as an on-demand catalog. Default 60 keeps all skills directly callable for typical setups.",
+        min=1,
+        max=500,
+        default=60,
+    )
+
     # region usage log (append-only JSONL sink for team-wide aggregation)
     trace_log_enabled: props.BoolProperty(
         name="Log Agent Usage",
