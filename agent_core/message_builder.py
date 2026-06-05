@@ -16,6 +16,8 @@ import json
 from dataclasses import dataclass, field
 from typing import Any
 
+from . import context_budget
+
 
 # ─── Internal data types ────────────────────────────────────────────────────
 
@@ -91,13 +93,17 @@ class MessageBuilder:
         tool_name_mapper=None,
         include_reasoning_content: bool = False,
         include_image_results: bool = False,
+        budget_tokens: int | None = None,
     ) -> list[dict]:
         """Emit OpenAI-compatible messages list."""
+        msgs = self._messages
+        if budget_tokens is not None:
+            msgs = context_budget.fit_messages(msgs, budget_tokens, keep_last_n=1)
         map_tool_name = tool_name_mapper or (lambda name: name)
         out: list[dict] = []
         if system_prompt:
             out.append({"role": "system", "content": system_prompt})
-        for msg in self._messages:
+        for msg in msgs:
             if msg.role == "user":
                 if include_image_results and msg.images:
                     content = []
@@ -170,11 +176,15 @@ class MessageBuilder:
         system_prompt: str | None = None,
         tool_name_mapper=None,
         include_image_results: bool = False,
+        budget_tokens: int | None = None,
     ) -> tuple[str, list[dict]]:
         """Return (system_text, messages_list) for the Anthropic Messages API."""
+        msgs = self._messages
+        if budget_tokens is not None:
+            msgs = context_budget.fit_messages(msgs, budget_tokens, keep_last_n=1)
         map_tool_name = tool_name_mapper or (lambda name: name)
         messages: list[dict] = []
-        for msg in self._messages:
+        for msg in msgs:
             if msg.role == "user":
                 if include_image_results and msg.images:
                     content = []

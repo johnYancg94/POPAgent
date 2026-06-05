@@ -44,6 +44,7 @@ from ..properties.addon_preferences import ChatCompanionPreferences
 from ..properties.property_updates import PropertyUpdates
 from .. import __package__ as base_package
 from ..agent_core import skill_registry, executor
+from ..agent_core import context_budget
 from ..agent_core.ui_bridge import ui_write, ui_call, ui_read
 from ..agent_core.message_builder import MessageBuilder, ToolCall, history_context_items
 from ..agent_core.context_builder import build_scene_summary
@@ -855,6 +856,12 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
 
         mb = await ui_read(_snapshot_messages)
 
+        eff_window = (
+            1_000_000 if getattr(prefs, "agent_context_1m_enabled", False)
+            else getattr(prefs, "agent_context_window", 256000)
+        )
+        ctx_budget = context_budget.history_budget(eff_window)
+
         ui_write(props, is_connecting=False)
 
         for iteration in range(max_iters):
@@ -864,6 +871,7 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                     system_text,
                     tool_name_mapper=provider._to_wire_tool_name,
                     include_image_results=include_image_results,
+                    budget_tokens=ctx_budget,
                 )
                 url, headers, body = provider.build_request(
                     prefs, messages, tools, system=system_for_wire, stream=use_stream
@@ -877,6 +885,7 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                         org == "deepseek"
                         or org == "mimo"
                     ),
+                    budget_tokens=ctx_budget,
                 )
                 url, headers, body = provider.build_request(
                     prefs, messages, tools, stream=use_stream
