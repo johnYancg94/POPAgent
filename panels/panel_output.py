@@ -643,12 +643,12 @@ class CHAT_COMPANION_PT_output(POLYGONINGENIEUR_panel, Panel):
 
         object_names = {obj.name for obj in bpy.data.objects}
         view_layer_objects = getattr(context.view_layer, "objects", [])
-        view_layer_object_names = {obj.name for obj in view_layer_objects}
-        unselectable_names = {
-            obj.name
-            for obj in bpy.data.objects
-            if obj.name in view_layer_object_names and getattr(obj, "hide_select", False)
-        }
+        view_layer_object_names = set()
+        unselectable_names = set()
+        for obj in view_layer_objects:
+            view_layer_object_names.add(obj.name)
+            if getattr(obj, "hide_select", False):
+                unselectable_names.add(obj.name)
         for result in objects:
             status = object_result_status(
                 result,
@@ -695,7 +695,7 @@ class CHAT_COMPANION_PT_output(POLYGONINGENIEUR_panel, Panel):
             bits.append(
                 "loc "
                 + ", ".join(
-                    f"{value:.3g}" if isinstance(value, (int, float)) else str(value)
+                    f"{value:.3f}" if isinstance(value, (int, float)) else str(value)
                     for value in location
                 )
             )
@@ -704,7 +704,7 @@ class CHAT_COMPANION_PT_output(POLYGONINGENIEUR_panel, Panel):
         if status == "MISSING":
             bits.append("Missing")
         elif status == "OUT_OF_VIEW_LAYER":
-            bits.append("Out of ViewLayer")
+            bits.append("Excluded (click to enable)")
         elif status == "UNSELECTABLE":
             bits.append("Unselectable")
         return " | ".join(bits)

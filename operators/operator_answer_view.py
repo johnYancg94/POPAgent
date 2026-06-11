@@ -10,6 +10,8 @@ import bpy
 from bpy import props
 from bpy.types import Operator
 
+from ..utils.view_layer_utils import find_layer_collection_chain
+
 
 ANSWER_TEXT_NAME = "POPAgent Answer.md"
 
@@ -88,13 +90,19 @@ class CHAT_COMPANION_OT_select_answer_object(Operator):
             self.report({"WARNING"}, f"Object not found: {self.object_name}")
             return {"CANCELLED"}
 
+        reincluded = []
         if not self._is_in_view_layer(context, obj):
-            searched = self._show_in_outliner_file_search(context, obj.name)
-            self.report(
-                {"WARNING"},
-                f"Object is not in the current ViewLayer; searched Outliner: {obj.name}",
-            )
-            return {"FINISHED"} if searched else {"CANCELLED"}
+            # The object may be hidden because its collection is excluded from
+            # the view layer. Clearing that exclude cascade is the only way to
+            # actually select it; an Outliner search alone cannot.
+            reincluded = self._reinclude_object(context, obj)
+            if not self._is_in_view_layer(context, obj):
+                searched = self._show_in_outliner_file_search(context, obj.name)
+                self.report(
+                    {"WARNING"},
+                    f"Object is not in the current ViewLayer; searched Outliner: {obj.name}",
+                )
+                return {"FINISHED"} if searched else {"CANCELLED"}
 
         if getattr(obj, "hide_select", False):
             searched = self._show_in_outliner_file_search(context, obj.name)
@@ -118,7 +126,14 @@ class CHAT_COMPANION_OT_select_answer_object(Operator):
         self._frame_object(context)
         self._show_view_layer_outliner(context)
         self._focus_active_in_outliner(context)
-        self.report({"INFO"}, f"Selected {obj.name}")
+        if reincluded:
+            names = ", ".join(reincluded)
+            self.report(
+                {"INFO"},
+                f"Selected {obj.name} (re-enabled collection: {names})",
+            )
+        else:
+            self.report({"INFO"}, f"Selected {obj.name}")
         return {"FINISHED"}
 
     def _is_in_view_layer(self, context, obj) -> bool:
@@ -126,6 +141,32 @@ class CHAT_COMPANION_OT_select_answer_object(Operator):
         if view_layer is None:
             return False
         return view_layer.objects.get(obj.name) is not None
+
+    def _reinclude_object(self, context, obj) -> list:
+        """Clear the exclude flag on every collection between the view-layer
+        root and the one holding ``obj``, so the object re-enters the view
+        layer and becomes selectable. Returns the names of collections that
+        were actually re-enabled (for user reporting)."""
+        view_layer = getattr(context, "view_layer", None)
+        if view_layer is None:
+            return []
+        root = getattr(view_layer, "layer_collection", None)
+        if root is None:
+            return []
+        chain = find_layer_collection_chain(root, obj.name)
+        if not chain:
+            return []
+        reincluded = []
+        for layer_collection in chain:
+            if getattr(layer_collection, "exclude", False):
+                try:
+                    layer_collection.exclude = False
+                except (AttributeError, RuntimeError):
+                    continue
+                name = getattr(getattr(layer_collection, "collection", None), "name", "")
+                if name:
+                    reincluded.append(name)
+        return reincluded
 
     def _show_in_outliner_file_search(self, context, object_name: str) -> bool:
         return self._set_outliner(context, "BLENDER_FILE", object_name)

@@ -81,11 +81,11 @@ def object_result_status(
     unselectable_names=None,
 ) -> str:
     name = str(result.get("name") or "")
-    if not name or name not in set(object_names):
+    if not name or name not in object_names:
         return "MISSING"
-    if view_layer_object_names is not None and name not in set(view_layer_object_names):
+    if view_layer_object_names is not None and name not in view_layer_object_names:
         return "OUT_OF_VIEW_LAYER"
-    if unselectable_names is not None and name in set(unselectable_names):
+    if unselectable_names is not None and name in unselectable_names:
         return "UNSELECTABLE"
     return "FOUND"
 

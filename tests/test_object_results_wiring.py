@@ -71,6 +71,18 @@ def test_select_answer_object_has_view_layer_and_outliner_fallbacks():
     assert '"UNSELECTABLE"' in panel_source
 
 
+def test_select_answer_object_reincludes_excluded_collection():
+    source = (ROOT / "operators" / "operator_answer_view.py").read_text(
+        encoding="utf-8"
+    )
+    util_source = (ROOT / "utils" / "view_layer_utils.py").read_text(encoding="utf-8")
+
+    assert "from ..utils.view_layer_utils import find_layer_collection_chain" in source
+    assert "reincluded = self._reinclude_object(context, obj)" in source
+    assert "layer_collection.exclude = False" in source
+    assert "def find_layer_collection_chain(" in util_source
+
+
 def test_object_results_keep_object_names_clickable_when_mesh_data_names_overlap():
     panel_source = (ROOT / "panels" / "panel_output.py").read_text(encoding="utf-8")
     skill_source = (ROOT / "builtin_skills" / "blender_object_results.py").read_text(
@@ -89,6 +101,7 @@ def run():
     test_new_requests_and_errors_clear_object_results()
     test_history_preserves_object_results()
     test_select_answer_object_has_view_layer_and_outliner_fallbacks()
+    test_select_answer_object_reincludes_excluded_collection()
     test_object_results_keep_object_names_clickable_when_mesh_data_names_overlap()
     print("test_object_results_wiring OK")
     return True
