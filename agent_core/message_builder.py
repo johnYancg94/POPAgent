@@ -58,6 +58,17 @@ class MessageBuilder:
     def append_assistant(self, text: str) -> None:
         self._messages.append(_Msg(role="assistant", text=text))
 
+    def append_resume_context(
+        self,
+        text: str,
+        current_prompt: str,
+        images: list[dict[str, str]] | None = None,
+    ) -> None:
+        self.append_user(
+            f"{text}\n\nCurrent user message:\n{current_prompt}",
+            images=images,
+        )
+
     def append_assistant_with_tool_calls(
         self,
         text: str,
@@ -169,6 +180,9 @@ class MessageBuilder:
                         "tool_call_id": msg.tool_result_id,
                         "content": _stringify_tool_result(msg.tool_result_content),
                     })
+        # 出口兜底:剥离开头 orphan tool / 漏 assistant,确保 first message
+        # 是合法 user(对应 400: first message must be user)。
+        out = context_budget.sanitize_wire_head_openai(out)
         return out
 
     def to_anthropic(
@@ -240,6 +254,10 @@ class MessageBuilder:
                         }
                     ],
                 })
+        # 出口兜底:剥掉开头 orphan tool_result user / 漏 assistant,
+        # 直到首条是合法 plain user(对应 400: orphan tool_use_id /
+        # first message must be user)。
+        messages = context_budget.sanitize_wire_head_anthropic(messages)
         return (system_prompt or "", messages)
 
     # ── History interop ──
@@ -262,7 +280,11 @@ def history_context_items(history_items, max_items: int | None = None) -> list:
     items = [
         item
         for item in history_items
-        if not item.is_error and item.is_enabled
+        if (
+            not item.is_error
+            and item.is_enabled
+            and getattr(item, "agent_status", "") not in {"INTERRUPTED", "RESUMED"}
+        )
     ]
     if max_items is not None:
         items = items[:max(0, max_items)]

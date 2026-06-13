@@ -22,6 +22,7 @@ def test_all_new_skills_registered_in_init():
         "TRANSFORM_SET", "TRANSFORM_APPLY", "TRANSFORM_SET_ORIGIN",
         "DELETE_OBJECTS", "DUPLICATE_OBJECT", "PARENT_OBJECTS",
         "ORGANIZE_COLLECTION", "LIST_SKILLS", "OBJECT_RESULTS", "WEB_SEARCH",
+        "RENDERSET_INSPECT", "RENDERSET_PREPARE", "RENDERSET_AUDIT",
     ):
         assert symbol in text, f"{symbol} not wired into builtin_skills/__init__.py"
 

@@ -1,4 +1,4 @@
-"""Skill 两级分诊：超阈值时核心常驻 + 非核心降目录。纯逻辑，不 import bpy。
+"""Callable Tool 两级分诊：超阈值时核心常驻 + 非核心降目录。纯逻辑，不 import bpy。
 
 executor 按 name 查 registry 不受 tools 数组限制，故非核心 skill 不进 tools
 仍可被调用——模型先 agent.list_skills(owner=X) 取 schema 再调。"""
@@ -10,6 +10,7 @@ DEFAULT_TRIAGE_THRESHOLD = 80
 
 CORE_SKILL_NAMES = frozenset({
     "agent.list_skills",
+    "agent.activate_skill",
     "agent.ask_human",
     "blender.query_scene",
     "blender.list_addons",
@@ -17,6 +18,9 @@ CORE_SKILL_NAMES = frozenset({
     "blender.set_active",
     "blender.api_search",
     "web.search",
+    "renderset.inspect",
+    "renderset.prepare",
+    "renderset.audit",
 })
 
 
@@ -45,11 +49,11 @@ def render_catalog(catalog_briefs: list[dict]) -> str:
         by_owner.setdefault(s.get("owner", "unknown"), []).append(s)
 
     lines = [
-        "Additional skills are available but not listed as callable tools this "
+        "Additional callable tools are available but not listed directly this "
         "turn (to save context). To use one, first call `agent.list_skills` with "
         "the owner prefix to fetch its full schema, then call it by name.",
         "",
-        "Available skill groups:",
+        "Available callable-tool groups:",
     ]
     for owner in sorted(by_owner):
         lines.append(f"- {owner}:")

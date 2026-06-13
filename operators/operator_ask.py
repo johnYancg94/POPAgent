@@ -47,7 +47,7 @@ from ..properties.properties import ChatCompanionProperties
 from ..properties.addon_preferences import ChatCompanionPreferences
 from ..properties.property_updates import PropertyUpdates
 from .. import __package__ as base_package
-from ..agent_core import skill_registry, executor
+from ..agent_core import agent_skill_registry, skill_registry, executor
 from ..agent_core import context_budget
 from ..agent_core import skill_triage
 from ..agent_core.ui_bridge import ui_write, ui_call, ui_read
@@ -67,10 +67,16 @@ from ..agent_core.execution_trace import (
     record_iteration,
     record_tool_call,
 )
+from ..agent_core.resume_context import (
+    build_resume_context,
+    parse_resume_context,
+    render_resume_context,
+)
 from ..agent_core.progress import AgentProgressEvent, ProgressSink
 from ..agent_core.agent_policy import (
     choose_max_iters,
     normalized_tool_signature,
+    normalized_result_signature,
     repeat_intervention,
     repeat_warning_text,
     is_parallel_safe,
@@ -809,6 +815,20 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                 system_text = system_text + "\n\n" + scene_summary
         except Exception as exc:
             print(f"[agent] scene summary failed: {exc}")
+        try:
+            blend_file = await ui_read(lambda: bpy.data.filepath)
+            agent_skill_registry.registry.refresh(blend_file=blend_file)
+            for diagnostic in agent_skill_registry.registry.diagnostics():
+                print(
+                    "[agent-skills] "
+                    f"{diagnostic['severity']} {diagnostic['code']}: "
+                    f"{diagnostic['message']} ({diagnostic['path']})"
+                )
+            agent_skill_catalog = agent_skill_registry.registry.render_catalog()
+            if agent_skill_catalog:
+                system_text = system_text + "\n\n" + agent_skill_catalog
+        except Exception as exc:
+            print(f"[agent] Agent Skill discovery failed: {exc}")
         skills = skill_registry.all_skills()
         if not include_image_results:
             # No image channel: drop the screenshot skill entirely so the model
@@ -834,8 +854,8 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         )
         max_history_context = getattr(prefs, "max_history_context", 5)
         # Anti-loop: track recent (skill, args_hash) pairs; graduated response.
-        recent_calls: list[tuple[str, str]] = []
-        warned_sigs: set[tuple[str, str]] = set()
+        recent_calls: list[tuple[tuple[str, str], tuple[str, str, str]]] = []
+        warned_sigs: set[tuple[tuple[str, str], tuple[str, str, str]]] = set()
         trace = create_trace()
         self._active_trace = trace
         progress = self._make_progress_sink(context, props)
@@ -860,9 +880,22 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         # background loop.
         def _snapshot_messages() -> "MessageBuilder":
             ctx = bpy.context
+            history = ctx.scene.chat_companion_history
             builder = MessageBuilder.from_history(
-                ctx.scene.chat_companion_history, max_items=max_history_context
+                history, max_items=max_history_context
             )
+            resume_text = ""
+            for item in history:
+                if getattr(item, "agent_status", "") != "INTERRUPTED":
+                    continue
+                checkpoint = parse_resume_context(
+                    getattr(item, "resume_context_json", "")
+                )
+                if checkpoint:
+                    resume_text = render_resume_context(checkpoint)
+                    item.agent_status = "RESUMED"
+                    item.is_enabled = False
+                break
             attach_str = ""
             for attachment in ctx.scene.chat_companion_attachments:
                 if attachment.is_enabled:
@@ -870,10 +903,19 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                         attach_str += "\n" + json.loads(attachment.text) + "\n"
                     except (json.JSONDecodeError, TypeError):
                         attach_str += "\n" + attachment.text + "\n"
-            builder.append_user(self.user_prompt + attach_str, images=user_images)
+            current_prompt = self.user_prompt + attach_str
+            if resume_text:
+                builder.append_resume_context(
+                    resume_text,
+                    current_prompt,
+                    images=user_images,
+                )
+            else:
+                builder.append_user(current_prompt, images=user_images)
             return builder
 
         mb = await ui_read(_snapshot_messages)
+        active_agent_skills = agent_skill_registry.ActiveAgentSkills()
 
         eff_window = (
             1_000_000 if getattr(prefs, "agent_context_1m_enabled", False)
@@ -884,10 +926,14 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         ui_write(props, is_connecting=False)
 
         for iteration in range(max_iters):
+            active_skill_text = active_agent_skills.render_instructions()
+            iteration_system_text = system_text
+            if active_skill_text:
+                iteration_system_text = system_text + "\n\n" + active_skill_text
             # Build provider-specific wire payload.
             if org == "minimax":
                 system_for_wire, messages = mb.to_anthropic(
-                    system_text,
+                    iteration_system_text,
                     tool_name_mapper=provider._to_wire_tool_name,
                     include_image_results=include_image_results,
                     budget_tokens=ctx_budget,
@@ -897,7 +943,7 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                 )
             else:
                 messages = mb.to_openai(
-                    system_prompt=system_text,
+                    system_prompt=iteration_system_text,
                     tool_name_mapper=provider._to_wire_tool_name,
                     include_image_results=include_image_results,
                     include_reasoning_content=(
@@ -987,24 +1033,21 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                 actions = []
                 for tc in tcs:
                     sig = normalized_tool_signature(tc.name, tc.arguments)
-                    recent_calls.append(sig)
-                    sigs.append(sig)
-                    actions.append(repeat_intervention(recent_calls, sig))
-
-                abort_idx = next(
-                    (i for i, a in enumerate(actions) if a == "abort"), None
-                )
-                if abort_idx is not None:
-                    bad = tcs[abort_idx]
-                    final_text = (
-                        f"检测到工具 `{bad.name}` 被反复以相同参数调用（≥3次），已中止循环。"
-                        "请换一种方式或直接告诉我需要什么帮助。"
+                    skill = skill_registry.get_skill_by_name(tc.name)
+                    meta = (skill.get("metadata", {}) if skill else {}) or {}
+                    has_side_effects = bool(
+                        meta.get("modifies_scene")
+                        or meta.get("writes_files")
+                        or meta.get("launches_external_process")
                     )
-                    mb.append_assistant(final_text)
-                    record_abort(trace, "anti_loop")
-                    progress.emit(AgentProgressEvent(kind="finalizing"))
-                    self._finish_agent(context, props, prefs, mb, final_text, trace)
-                    return
+                    sigs.append(sig)
+                    actions.append(
+                        repeat_intervention(
+                            recent_calls,
+                            sig,
+                            block_success=has_side_effects,
+                        )
+                    )
 
                 # Classify each call's parallel safety from its skill metadata.
                 parallel_flags = []
@@ -1022,9 +1065,36 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                 async def _run_one(idx: int) -> tuple:
                     tc = tcs[idx]
                     started = time.perf_counter()
+                    if actions[idx] == "block":
+                        result = {
+                            "ok": False,
+                            "error_kind": "loop_blocked",
+                            "error": (
+                                f"POPAgent blocked `{tc.name}` because the same "
+                                "complete arguments produced the same result "
+                                "twice recently. Change parameters, use another "
+                                "tool, or explain the blocker to the user."
+                            ),
+                        }
+                        return result, 0.0
+
+                    previous_outcome = next(
+                        (
+                            outcome
+                            for previous_sig, outcome in reversed(recent_calls)
+                            if previous_sig == sigs[idx]
+                        ),
+                        None,
+                    )
                     result = await executor.run(tc, context, progress=progress.emit)
-                    if actions[idx] == "warn" and sigs[idx] not in warned_sigs:
-                        warned_sigs.add(sigs[idx])
+                    outcome = normalized_result_signature(result)
+                    warning_key = (sigs[idx], outcome)
+                    if (
+                        actions[idx] == "warn"
+                        and outcome == previous_outcome
+                        and warning_key not in warned_sigs
+                    ):
+                        warned_sigs.add(warning_key)
                         if isinstance(result, dict):
                             result = dict(result)
                             result["loop_warning"] = repeat_warning_text(tc.name)
@@ -1055,7 +1125,24 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                 # 3. Append results + record trace in original index order.
                 for idx, tc in enumerate(tcs):
                     result, duration_ms = results[idx]
+                    if not (
+                        isinstance(result, dict)
+                        and result.get("error_kind") == "loop_blocked"
+                    ):
+                        recent_calls.append(
+                            (sigs[idx], normalized_result_signature(result))
+                        )
                     mb.append_tool_result(tc.id, tc.name, result)
+                    if (
+                        tc.name == "agent.activate_skill"
+                        and isinstance(result, dict)
+                        and result.get("ok")
+                    ):
+                        activated = agent_skill_registry.registry.get(
+                            str(tc.arguments.get("name", "")).strip()
+                        )
+                        if activated is not None:
+                            active_agent_skills.add(activated)
                     record_tool_call(
                         trace,
                         iteration_entry,
@@ -1078,10 +1165,30 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                 return
 
         # Exceeded max_iters.
-        final_text = f"已达最大迭代次数（{max_iters}），任务可能未完成。"
+        final_text = (
+            f"⚠ 已达本回合最大迭代次数（{max_iters}），任务可能未完成。\n"
+            f"  · 查看 Timeline 面板的 tool call 历史与 error。\n"
+            f"  · 可在插件首选项 → Agent Mode → Max Iterations 调高（上限 100，硬上限 200）。\n"
+            f"  · 也可将任务拆成更小的子任务后重试。"
+        )
         record_abort(trace, "max_iters")
         progress.emit(AgentProgressEvent(kind="finalizing"))
-        self._finish_agent(context, props, prefs, mb, final_text, trace)
+        checkpoint = build_resume_context(
+            original_prompt=self.user_prompt,
+            trace=trace,
+            error_kind="max_iters",
+            error_message=final_text,
+        )
+        self._finish_agent(
+            context,
+            props,
+            prefs,
+            mb,
+            final_text,
+            trace,
+            agent_status="INTERRUPTED",
+            resume_context_json=json.dumps(checkpoint, ensure_ascii=False),
+        )
 
     async def _agent_stream_iter(self, context, client, provider, url, headers,
                                  body, prefs, props, progress: ProgressSink):
@@ -1099,6 +1206,11 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
                 "POST", url=url, headers=headers, json=body,
                 timeout=build_httpx_timeout(prefs.timeout),
             ) as response:
+                if response.is_error:
+                    # Cache the provider error while the stream is still open.
+                    # HTTPStatusError keeps this response, so diagnostics can
+                    # safely read the body after leaving the context manager.
+                    await response.aread()
                 response.raise_for_status()
                 cc_globals.request_failed = False
                 async for raw_line in response.aiter_lines():
@@ -1147,7 +1259,23 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         except ModelServerTimeoutError:
             raise
         except Exception as exc:
-            print(f"[agent] streaming error: {exc}")
+            # 取证:服务端 400 时 body 里通常带 error.message,这里尝试读取。
+            # stream 模式 body 可能未消费,aread() 可能耗时不稳,必须保护——
+            # 万一读不到,只保留状态码/url,不抛二次异常盖住原始错误。
+            status_code = getattr(exc, "response", None)
+            status_code = getattr(status_code, "status_code", None) if status_code else None
+            if status_code is None:
+                # httpx HTTPStatusError 通常是 status_code,兜底再取一次
+                status_code = getattr(exc, "status_code", None)
+            print(f"[agent] streaming error: {exc} status={status_code}")
+            try:
+                resp = getattr(exc, "response", None)
+                if resp is not None and hasattr(resp, "aread"):
+                    body = await resp.aread()
+                    if body:
+                        print(f"[agent] response body: {body[:2000]!r}")
+            except Exception as body_exc:  # noqa: BLE001
+                print(f"[agent] response body read failed: {body_exc}")
             self.show_general_error(context, solution=f"Streaming failed: {exc}")
             return None
         finally:
@@ -1311,14 +1439,36 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
             return "streaming"
         return "plain"
 
-    def _finish_agent(self, context, props, prefs, mb, final_text: str,
-                      trace: dict | None = None):
+    def _finish_agent(
+        self,
+        context,
+        props,
+        prefs,
+        mb,
+        final_text: str,
+        trace: dict | None = None,
+        *,
+        agent_status: str = "COMPLETED",
+        resume_context_json: str = "",
+    ):
         """Finalize an agent turn. Called from the background loop; runs the
         bpy-touching finalize (answer write, history append, usage log) on the
         main thread as one ordered drain-queue task."""
-        ui_call(self._finalize_agent, final_text, trace)
+        ui_call(
+            self._finalize_agent,
+            final_text,
+            trace,
+            agent_status,
+            resume_context_json,
+        )
 
-    def _finalize_agent(self, final_text: str, trace: dict | None) -> None:
+    def _finalize_agent(
+        self,
+        final_text: str,
+        trace: dict | None,
+        agent_status: str,
+        resume_context_json: str,
+    ) -> None:
         import bpy
         ctx = bpy.context
         props = ctx.scene.chat_companion_properties
@@ -1346,6 +1496,8 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
             object_results=object_results,
             is_favorite=False,
             tool_calls_json=tool_calls_json,
+            agent_status=agent_status,
+            resume_context_json=resume_context_json,
         )
 
         props.waiting_for_answer = False
@@ -1428,6 +1580,46 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         except Exception as exc:
             print(f"[agent] linking episode to history failed: {exc}")
 
+    def _save_interrupted_agent_history(
+        self, context, *, error_kind: str, error_message: str
+    ) -> bool:
+        active_trace = getattr(self, "_active_trace", None)
+        if not isinstance(active_trace, dict):
+            return False
+
+        record_abort(active_trace, error_kind)
+        checkpoint = build_resume_context(
+            original_prompt=self.user_prompt,
+            trace=active_trace,
+            error_kind=error_kind,
+            error_message=error_message,
+        )
+        interrupted_answer = (
+            f"Task interrupted before completion ({error_kind}). Progress was preserved. "
+            "Send another message to continue from the saved checkpoint."
+        )
+        chat_properties = context.scene.chat_companion_properties
+        cc_globals.request_failed = False
+        chat_properties.answer = interrupted_answer
+        chat_properties.answer_parts = json.dumps(
+            [{"type": "text", "content": [interrupted_answer]}]
+        )
+        chat_properties.answer_object_results = ""
+        bpy.ops.chat_companion.add_history_item(
+            display_name=self.user_prompt or "Interrupted task",
+            prompt=self.user_prompt,
+            answer=interrupted_answer,
+            parts=json.dumps(
+                [{"type": "text", "content": [interrupted_answer]}]
+            ),
+            is_error=False,
+            is_enabled=True,
+            tool_calls_json=json.dumps(active_trace, ensure_ascii=False),
+            agent_status="INTERRUPTED",
+            resume_context_json=json.dumps(checkpoint, ensure_ascii=False),
+        )
+        return True
+
     def show_connection_error(self, context, error):
         if not self._on_main_thread():
             ui_call(self.show_connection_error, context, error)
@@ -1469,24 +1661,24 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         )
         chat_properties.answer_object_results = ""
 
-        # ! add error to history
-        bpy.ops.chat_companion.add_history_item(
-            display_name="Connection Error",
-            answer=chat_properties.answer,
-            parts=chat_properties.answer_parts,
-            is_error=True,
-            tool_calls_json=json.dumps(
-                getattr(self, "_active_trace", None) or [],
-                ensure_ascii=False,
-            ),
-            error_button_icon=chat_properties.error_button_icon,
-            error_button_text=chat_properties.error_button_text,
-            error_button_content=chat_properties.error_button_content,
-            error_button_url=chat_properties.error_button_url,
-            error_title=chat_properties.error_title,
-            error_info=chat_properties.error_info,
-            error_message=chat_properties.error_message,
-        )
+        if not self._save_interrupted_agent_history(
+            context,
+            error_kind="connection_error",
+            error_message=str(error),
+        ):
+            bpy.ops.chat_companion.add_history_item(
+                display_name="Connection Error",
+                answer=chat_properties.answer,
+                parts=chat_properties.answer_parts,
+                is_error=True,
+                error_button_icon=chat_properties.error_button_icon,
+                error_button_text=chat_properties.error_button_text,
+                error_button_content=chat_properties.error_button_content,
+                error_button_url=chat_properties.error_button_url,
+                error_title=chat_properties.error_title,
+                error_info=chat_properties.error_info,
+                error_message=chat_properties.error_message,
+            )
 
         try:
             # it sometimes doesn't exist when view3D isn't current area
@@ -1548,20 +1740,24 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         )
         chat_properties.answer_object_results = ""
 
-        # ! add error to history
-        bpy.ops.chat_companion.add_history_item(
-            display_name="OpenAI Error",
-            answer=chat_properties.answer,
-            parts=chat_properties.answer_parts,
-            is_error=True,
-            error_button_icon=chat_properties.error_button_icon,
-            error_button_text=chat_properties.error_button_text,
-            error_button_content=chat_properties.error_button_content,
-            error_button_url=chat_properties.error_button_url,
-            error_title=chat_properties.error_title,
-            error_info=chat_properties.error_info,
+        if not self._save_interrupted_agent_history(
+            context,
+            error_kind="provider_error",
             error_message=chat_properties.error_message,
-        )
+        ):
+            bpy.ops.chat_companion.add_history_item(
+                display_name="OpenAI Error",
+                answer=chat_properties.answer,
+                parts=chat_properties.answer_parts,
+                is_error=True,
+                error_button_icon=chat_properties.error_button_icon,
+                error_button_text=chat_properties.error_button_text,
+                error_button_content=chat_properties.error_button_content,
+                error_button_url=chat_properties.error_button_url,
+                error_title=chat_properties.error_title,
+                error_info=chat_properties.error_info,
+                error_message=chat_properties.error_message,
+            )
 
         try:
             # it sometimes doesn't exist when view3D isn't current area
@@ -1623,20 +1819,24 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         )
         chat_properties.answer_object_results = ""
 
-        # ! add error to history
-        bpy.ops.chat_companion.add_history_item(
-            display_name="Request Error",
-            answer=chat_properties.answer,
-            parts=chat_properties.answer_parts,
-            is_error=True,
-            error_button_icon=chat_properties.error_button_icon,
-            error_button_text=chat_properties.error_button_text,
-            error_button_content=chat_properties.error_button_content,
-            error_button_url=chat_properties.error_button_url,
-            error_title=chat_properties.error_title,
-            error_info=chat_properties.error_info,
+        if not self._save_interrupted_agent_history(
+            context,
+            error_kind="request_error",
             error_message=chat_properties.error_message,
-        )
+        ):
+            bpy.ops.chat_companion.add_history_item(
+                display_name="Request Error",
+                answer=chat_properties.answer,
+                parts=chat_properties.answer_parts,
+                is_error=True,
+                error_button_icon=chat_properties.error_button_icon,
+                error_button_text=chat_properties.error_button_text,
+                error_button_content=chat_properties.error_button_content,
+                error_button_url=chat_properties.error_button_url,
+                error_title=chat_properties.error_title,
+                error_info=chat_properties.error_info,
+                error_message=chat_properties.error_message,
+            )
 
         try:
             # it sometimes doesn't exist when view3D isn't current area
@@ -1696,6 +1896,19 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         )
         chat_properties.answer_object_results = ""
         chat_properties.waiting_for_answer = False
+
+        if self._save_interrupted_agent_history(
+            context,
+            error_kind=title or "agent_error",
+            error_message=str(error or solution),
+        ):
+            try:
+                context.area.tag_redraw()
+            except Exception:
+                pass
+            self.report({"WARNING"}, str(error))
+            self.quit()
+            return
 
         # ! add error to history
         bpy.ops.chat_companion.add_history_item(

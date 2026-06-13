@@ -259,10 +259,13 @@ class ChatCompanionPreferences(AddonPreferences):
 
     agent_max_iters: props.IntProperty(
         name="Max Iterations",
-        description="Maximum tool-calling iterations per agent turn before the loop is aborted.",
+        description=(
+            "Maximum tool-calling iterations per agent turn before the loop is aborted. "
+            "Raise for long multi-step pipelines. Hard cap 200 enforced in code."
+        ),
         min=1,
-        max=30,
-        default=10,
+        max=100,
+        default=20,
     )
 
     max_history_context: props.IntProperty(
@@ -543,6 +546,7 @@ class ChatCompanionPreferences(AddonPreferences):
         agent_iter_right: UILayout = agent_iter_split.column(align=True)
         agent_iter_right.enabled = self.agent_mode_enabled
         agent_iter_right.prop(self, "agent_max_iters", text="")
+        agent_iter_right.label(text="1–100 (hard cap 200)")
         agent_history_split: UILayout = agent_settings.split(align=True, factor=2 / 5)
         agent_history_left: UILayout = agent_history_split.row(align=True)
         agent_history_left.alignment = "RIGHT"
@@ -593,7 +597,7 @@ class ChatCompanionPreferences(AddonPreferences):
 
         # ! skills
         skills_settings = layout.column(align=True)
-        skills_settings.label(text="Skills", icon="TOOL_SETTINGS")
+        skills_settings.label(text="Agent Skills and Callable Tools", icon="TOOL_SETTINGS")
         draw_skills_ui(skills_settings, prefs=self, developer_mode=self.developer_mode)
 
         layout.box()
@@ -636,6 +640,8 @@ class ChatCompanionPreferences(AddonPreferences):
                 not_installed_text.label(text="Python installer pip not installed.")
             if not dependencies.httpx_installed:
                 not_installed_text.label(text="Python module httpx not installed.")
+            if not dependencies.yaml_installed:
+                not_installed_text.label(text="Python module PyYAML not installed.")
             streaming_container.label(
                 text="Streaming not available, using All at Once."
             )
@@ -661,6 +667,13 @@ class ChatCompanionPreferences(AddonPreferences):
                     icon="URL",
                 )
                 httpx_link.url = "https://www.python-httpx.org/"
+            if not dependencies.yaml_installed:
+                yaml_link = streaming_container.operator(
+                    operator=CHAT_COMPANION_OT_website.bl_idname,
+                    text="PyYAML documentation",
+                    icon="URL",
+                )
+                yaml_link.url = "https://pyyaml.org/wiki/PyYAMLDocumentation"
 
         system_settings.separator()
 

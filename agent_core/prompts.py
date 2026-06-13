@@ -45,6 +45,15 @@ RULE_NODE_EXPERT = (
     "and `blender.geometry_nodes.set_node_input`. Use `dev.run_python` only "
     "when the dedicated node skills cannot express the requested operation."
 )
+RULE_RENDERSET = (
+    "RenderSet Pro rule: for RenderSet inspection, preparation, repair, "
+    "or readiness checks, activate the `prepare-renderset-contexts` Agent "
+    "Skill and use `renderset.inspect`, `renderset.prepare`, or "
+    "`renderset.audit`. When these dedicated tools are available, you "
+    "must not use `dev.run_python` for RenderSet work. If the tools report "
+    "an unsupported RenderSet version, explain the blocker instead of "
+    "attempting an ad-hoc Python fallback."
+)
 RULE_PLANNING = (
     "Agent planning/reflection rule: for multi-step tasks, keep a "
     "short internal plan before acting. After each tool result, check "
@@ -116,6 +125,7 @@ def build_system_prompt(
         RULE_PYTHON_API,
         RULE_WEB_SEARCH,
         RULE_NODE_EXPERT,
+        RULE_RENDERSET,
         RULE_PLANNING,
         RULE_ASK_HUMAN,
         RULE_EVIDENCE,

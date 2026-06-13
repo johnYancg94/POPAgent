@@ -1,0 +1,4 @@
+interface:
+  display_name: "准备 RenderSet Context"
+  short_description: "分析、创建并验证 Blender RenderSet Pro 渲染任务"
+  default_prompt: "Activate $prepare-renderset-contexts, then call renderset.prepare once to prepare, audit, restore, and save the current Blender scene without starting a render."

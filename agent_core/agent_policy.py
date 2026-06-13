@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import json
 from typing import Any
 
@@ -12,37 +13,93 @@ _IGNORED_KEYS = {
     "request_id",
     "uuid",
     "nonce",
+    "loop_warning",
 }
 
 
 def normalized_tool_signature(name: str, arguments: dict) -> tuple[str, str]:
-    return name, json.dumps(
+    canonical = json.dumps(
         _normalize_value(arguments),
         ensure_ascii=False,
         sort_keys=True,
         separators=(",", ":"),
     )
+    return name, hashlib.sha256(canonical.encode("utf-8")).hexdigest()
+
+
+def normalized_result_signature(result: Any) -> tuple[str, str, str]:
+    if not isinstance(result, dict):
+        canonical = json.dumps(
+            _normalize_value(result),
+            ensure_ascii=False,
+            sort_keys=True,
+            separators=(",", ":"),
+        )
+        return (
+            "ok",
+            "",
+            hashlib.sha256(canonical.encode("utf-8")).hexdigest(),
+        )
+
+    ok = bool(result.get("ok", True))
+    error_kind = str(result.get("error_kind") or "")
+    if not ok:
+        error_text = str(result.get("error") or "")
+        tail = next(
+            (line.strip() for line in reversed(error_text.splitlines()) if line.strip()),
+            "",
+        )
+        return "error", error_kind, tail[:500]
+
+    canonical = json.dumps(
+        _normalize_value(result),
+        ensure_ascii=False,
+        sort_keys=True,
+        separators=(",", ":"),
+    )
+    return "ok", "", hashlib.sha256(canonical.encode("utf-8")).hexdigest()
 
 
 # Graduated anti-loop thresholds (count of identical signatures in the recent
 # window, inclusive of the current call):
 #   < WARN   -> proceed (normal retry)
 #   == WARN  -> inject a correction nudge, but still execute this call
-#   >= ABORT -> stop the loop (last-resort safety net)
+#   >= BLOCK -> reject only this tool call and let the model change strategy
 _REPEAT_WARN = 2
-_REPEAT_ABORT = 3
+_REPEAT_BLOCK = 3
 
 
-def repeat_intervention(recent_calls: list, sig: tuple, *, window: int = 6) -> str:
+def repeat_intervention(
+    recent_calls: list,
+    sig: tuple,
+    *,
+    window: int = 6,
+    block_success: bool = False,
+) -> str:
     """Decide how to react to a repeated tool signature.
 
-    `recent_calls` must already include the current `sig`. Returns one of
-    "proceed", "warn", or "abort".
+    `recent_calls` contains completed calls as `(tool_signature,
+    result_signature)` pairs. Returns "proceed", "warn", or "block".
     """
-    repeated = sum(1 for s in recent_calls[-window:] if s == sig)
-    if repeated >= _REPEAT_ABORT:
-        return "abort"
-    if repeated == _REPEAT_WARN:
+    outcomes = [
+        outcome
+        for previous_sig, outcome in recent_calls[-window:]
+        if previous_sig == sig
+    ]
+    if not outcomes:
+        return "proceed"
+    latest = outcomes[-1]
+    repeated = 0
+    for outcome in reversed(outcomes):
+        if outcome != latest:
+            break
+        repeated += 1
+    latest_succeeded = bool(latest and latest[0] == "ok")
+    if repeated >= _REPEAT_BLOCK - 1 and (
+        block_success or not latest_succeeded
+    ):
+        return "block"
+    if repeated >= _REPEAT_WARN - 1:
         return "warn"
     return "proceed"
 
@@ -104,7 +161,19 @@ def plan_tool_groups(parallel_flags: list) -> list:
     return groups
 
 
+_ABSOLUTE_MAX_ITERS = 200
+_SIMPLE_TASK_CAP = 5
+
+
 def choose_max_iters(prompt: str, *, tool_count: int, configured_max: int) -> int:
+    """Resolve effective max-iterations for a turn.
+
+    - Complex tasks (many tools or strong markers) trust the user's
+      ``configured_max`` so long pipelines can use the full headroom.
+    - Simple tasks are capped at ``_SIMPLE_TASK_CAP`` to save cost, while
+      still respecting a smaller user setting.
+    - ``_ABSOLUTE_MAX_ITERS`` is a hard ceiling that bounds prefs tampering.
+    """
     configured = max(1, int(configured_max or 1))
     text = (prompt or "").lower()
     complex_markers = (
@@ -118,13 +187,13 @@ def choose_max_iters(prompt: str, *, tool_count: int, configured_max: int) -> in
         "检查",
         "then",
         "然后",
+        "pipeline",
+        "批次",
     )
-    suggested = 3
-    if tool_count >= 6 or any(marker in text for marker in complex_markers):
-        suggested = 15
-    elif tool_count >= 3:
-        suggested = 8
-    return min(configured, suggested)
+    is_complex = tool_count >= 5 or any(marker in text for marker in complex_markers)
+    if is_complex:
+        return min(_ABSOLUTE_MAX_ITERS, configured)
+    return min(_ABSOLUTE_MAX_ITERS, configured, _SIMPLE_TASK_CAP)
 
 
 def _normalize_value(value: Any) -> Any:
@@ -136,9 +205,4 @@ def _normalize_value(value: Any) -> Any:
         }
     if isinstance(value, list):
         return [_normalize_value(item) for item in value]
-    if isinstance(value, str):
-        compact = " ".join(value.split())
-        if len(compact) > 160:
-            return compact[:160]
-        return compact
     return value

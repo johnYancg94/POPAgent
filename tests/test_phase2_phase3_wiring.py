@@ -29,7 +29,7 @@ def test_agent_loop_uses_policy_helpers():
 
     assert "choose_max_iters" in text
     assert "normalized_tool_signature" in text
-    assert "planning/reflection" in text
+    assert "agent_prompts.build_system_prompt" in text
 
 
 def test_operator_ask_records_error_usage_once():
@@ -41,7 +41,7 @@ def test_operator_ask_records_error_usage_once():
 
 
 def test_agent_loop_prefers_dedicated_blender_node_skills():
-    text = (ROOT / "operators" / "operator_ask.py").read_text(encoding="utf-8")
+    text = (ROOT / "agent_core" / "prompts.py").read_text(encoding="utf-8")
 
     assert "Blender node expert rule" in text
     assert "blender.material.inspect_nodes" in text

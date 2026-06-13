@@ -1,7 +1,7 @@
 """
-Process-level skill registry.
+Process-level callable-tool registry.
 
-Skills are keyed by (owner, name). Re-registering the same (owner, name)
+Callable tools are keyed by (owner, name). Re-registering the same (owner, name)
 overwrites the previous entry silently — safe for Blender hot-reloads.
 """
 
@@ -59,7 +59,7 @@ def _permission_overrides_from_prefs(prefs=None) -> dict[tuple[str, str], str]:
 
 
 def register_skill(skill: dict) -> None:
-    """Register or overwrite a skill.
+    """Register or overwrite a callable tool.
 
     Required keys: name, description, parameters (JSON Schema), owner, handler, metadata.
     """

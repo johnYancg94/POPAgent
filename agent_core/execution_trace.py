@@ -70,7 +70,7 @@ def record_tool_call(
         "error_kind": error_kind,
         "duration_ms": max(0, int(duration_ms)),
         "arguments_preview": preview_value(arguments),
-        "result_preview": preview_value(result),
+        "result_preview": preview_result(result),
     }
     iteration.setdefault("tool_calls", []).append(item)
 
@@ -131,3 +131,21 @@ def preview_value(value: Any, limit: int = _PREVIEW_LIMIT) -> str:
     if len(text) <= limit:
         return text
     return text[: limit - 3] + "..."
+
+
+def preview_result(value: Any, limit: int = _PREVIEW_LIMIT) -> str:
+    text = preview_value(value, limit)
+    if not isinstance(value, dict) or value.get("ok", True):
+        return text
+
+    error = str(value.get("error") or "")
+    tail = next(
+        (line.strip() for line in reversed(error.splitlines()) if line.strip()),
+        "",
+    )
+    if not tail or tail in text:
+        return text
+    suffix = f" | error_tail: {tail}"
+    if len(suffix) >= limit:
+        return suffix[-limit:]
+    return text[: limit - len(suffix)] + suffix

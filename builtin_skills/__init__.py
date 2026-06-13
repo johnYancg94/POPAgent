@@ -29,10 +29,13 @@ from .blender_object import (
     ORGANIZE_COLLECTION,
 )
 from .agent_meta import LIST_SKILLS
+from .agent_skill_activation import ACTIVATE_AGENT_SKILL
 from .agent_runtime import RUNTIME_INFO
 from .agent_interact import ASK_HUMAN
 from .dev_skills import RUN_PYTHON
-from ..agent_core import skill_registry
+from .renderset_tools import RENDERSET_INSPECT, RENDERSET_PREPARE, RENDERSET_AUDIT
+from ..agent_core import agent_skill_registry, skill_registry
+from pathlib import Path
 
 _BUILTIN_SKILLS = [
     QUERY_SCENE,
@@ -68,16 +71,27 @@ _BUILTIN_SKILLS = [
     PARENT_OBJECTS,
     ORGANIZE_COLLECTION,
     LIST_SKILLS,
+    ACTIVATE_AGENT_SKILL,
     RUNTIME_INFO,
     ASK_HUMAN,
     RUN_PYTHON,
+    RENDERSET_INSPECT,
+    RENDERSET_PREPARE,
+    RENDERSET_AUDIT,
 ]
+
+_BUNDLED_AGENT_SKILLS = (
+    Path(__file__).with_name("resources"),
+)
 
 
 def register():
     for skill in _BUILTIN_SKILLS:
         skill_registry.register_skill(skill)
+    for root in _BUNDLED_AGENT_SKILLS:
+        agent_skill_registry.registry.register_bundled_root("popagent", root)
 
 
 def unregister():
     skill_registry.unregister_namespace("builtin")
+    agent_skill_registry.registry.unregister_bundled_root("popagent")

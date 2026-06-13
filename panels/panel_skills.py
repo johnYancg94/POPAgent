@@ -6,6 +6,7 @@
 from bpy.types import Panel, UILayout
 from .panel import POLYGONINGENIEUR_panel
 from ..agent_core import skill_registry
+from ..agent_core import agent_skill_registry
 from ..agent_core.confirm_dialog import session_trust_list
 
 
@@ -68,10 +69,10 @@ def _draw_permission_controls(layout: UILayout, owner: str, name: str, level: st
 def draw_skills_ui(layout: UILayout, prefs=None, developer_mode: bool = False):
     items = skill_registry.all_skills_including_disabled()
     if not items:
-        layout.label(text="(no skills registered)", icon="INFO")
-        return
+        layout.label(text="(no callable tools registered)", icon="INFO")
+    else:
+        layout.label(text=f"Callable Tools ({len(items)})")
 
-    layout.label(text=f"{len(items)} skill(s) registered")
     if developer_mode:
         restore_row = layout.row(align=True)
         restore_row.operator(
@@ -114,6 +115,27 @@ def draw_skills_ui(layout: UILayout, prefs=None, developer_mode: bool = False):
                 _draw_permission_controls(label_col, owner, name, level)
 
     layout.separator()
+    agent_skills = agent_skill_registry.registry.all()
+    layout.label(text=f"Agent Skills ({len(agent_skills)})", icon="FILE_TEXT")
+    if not agent_skills:
+        layout.label(text="Discovered when an Agent request starts.", icon="INFO")
+    else:
+        agent_box = layout.box()
+        for record in agent_skills:
+            col = agent_box.column(align=True)
+            col.label(text=record["name"])
+            sub = col.row()
+            sub.scale_y = 0.65
+            sub.label(text=record["source"])
+    diagnostics = agent_skill_registry.registry.diagnostics()
+    if diagnostics:
+        layout.label(
+            text=f"Agent Skill diagnostics: {len(diagnostics)}",
+            icon="ERROR",
+        )
+        if developer_mode:
+            for item in diagnostics[:5]:
+                layout.label(text=f"{item['code']}: {item['message']}")
 
     trust = session_trust_list()
     trust_box = layout.box()
@@ -131,7 +153,7 @@ def draw_skills_ui(layout: UILayout, prefs=None, developer_mode: bool = False):
 
 class CHAT_COMPANION_PT_skills(POLYGONINGENIEUR_panel, Panel):
     bl_idname = "CHAT_COMPANION_PT_skills"
-    bl_label = "Skills"
+    bl_label = "Agent Skills / Tools"
     bl_order = 4
     bl_options = {"DEFAULT_CLOSED"}
 

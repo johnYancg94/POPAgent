@@ -48,6 +48,8 @@ class HistoryPropertyGroup(bpy.types.PropertyGroup):
         description="JSON list of tool calls made during this agent turn",
         default="",
     )
+    agent_status: bpy.props.StringProperty(default="")
+    resume_context_json: bpy.props.StringProperty(default="")
 
     # Usage-log feedback: link this turn back to its on-disk JSONL episode so the
     # thumbs up/down buttons can rewrite that line. Empty episode_id = no log
@@ -120,6 +122,8 @@ class CHAT_COMPANION_UL_item_history(bpy.types.UIList):
 
             if item.is_error:
                 layout.label(icon="ERROR")
+            elif item.agent_status == "INTERRUPTED":
+                layout.label(icon="PAUSE")
 
             if not item.is_error:
                 icon = "CHECKBOX_HLT" if item.is_enabled else "CHECKBOX_DEHLT"

@@ -81,10 +81,37 @@ def test_parse_trace_supports_legacy_list_and_version_2_dict():
     assert parsed_v2 == trace
 
 
+def test_trace_error_preview_keeps_exception_tail():
+    trace = execution_trace.create_trace()
+    iteration = execution_trace.record_iteration(
+        trace,
+        index=0,
+        stream=False,
+        latency_ms=1,
+        status_code=200,
+        finish_reason="tool_calls",
+    )
+    execution_trace.record_tool_call(
+        trace,
+        iteration,
+        name="dev.run_python",
+        arguments={"code": "x" * 500},
+        result={
+            "ok": False,
+            "error_kind": "exec_error",
+            "error": "Traceback\n" + ("frame\n" * 100) + "SyntaxError: bad indent",
+        },
+    )
+
+    preview = iteration["tool_calls"][0]["result_preview"]
+    assert "SyntaxError: bad indent" in preview
+
+
 def run():
     test_trace_builder_creates_version_2_schema()
     test_trace_records_success_error_and_abort()
     test_parse_trace_supports_legacy_list_and_version_2_dict()
+    test_trace_error_preview_keeps_exception_tail()
     print("test_execution_trace OK")
     return True
 

@@ -63,9 +63,41 @@ def test_history_collection_read_via_marshalled_snapshot():
     assert uses_ui_read
 
 
+def test_agent_snapshot_consumes_interrupted_checkpoint():
+    text = (ROOT / "operators" / "operator_ask.py").read_text(encoding="utf-8")
+    tree = ast.parse(text)
+    agent_query = _agent_query_node(tree)
+    source = ast.get_source_segment(text, agent_query)
+
+    assert "resume_context_json" in source
+    assert 'agent_status = "RESUMED"' in source
+    assert "append_resume_context" in source
+
+
+def test_agent_error_is_saved_as_interrupted_turn_not_legacy_error():
+    text = (ROOT / "operators" / "operator_ask.py").read_text(encoding="utf-8")
+
+    assert 'agent_status="INTERRUPTED"' in text
+    assert "resume_context_json=" in text
+    assert "display_name=self.user_prompt" in text
+    assert "cc_globals.request_failed = False" in text
+
+
+def test_non_exception_agent_aborts_are_resumable():
+    text = (ROOT / "operators" / "operator_ask.py").read_text(encoding="utf-8")
+
+    assert 'error_kind="max_iters"' in text
+    assert '"error_kind": "loop_blocked"' in text
+    assert 'agent_status="INTERRUPTED"' in text
+    assert "被反复以相同参数调用（≥3次），已中止循环" not in text
+
+
 def run():
     test_message_builder_is_built_before_use()
     test_history_collection_read_via_marshalled_snapshot()
+    test_agent_snapshot_consumes_interrupted_checkpoint()
+    test_agent_error_is_saved_as_interrupted_turn_not_legacy_error()
+    test_non_exception_agent_aborts_are_resumable()
     print("test_operator_ask_agent_history_source OK")
     return True
 

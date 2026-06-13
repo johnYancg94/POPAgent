@@ -46,6 +46,9 @@ def test_render_catalog_groups_by_owner():
 def test_core_names_are_known_skills():
     assert "agent.list_skills" in triage.CORE_SKILL_NAMES
     assert "agent.ask_human" in triage.CORE_SKILL_NAMES
+    assert "renderset.inspect" in triage.CORE_SKILL_NAMES
+    assert "renderset.prepare" in triage.CORE_SKILL_NAMES
+    assert "renderset.audit" in triage.CORE_SKILL_NAMES
 
 def test_default_threshold_off_for_real_registered_count():
     # Real registry: 33 builtin + 28 poptools = 61 skills. With multimodal ON

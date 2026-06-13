@@ -4,16 +4,24 @@ from pathlib import Path
 import importlib.util
 import json
 import sys
+import types
 
 
 ROOT = Path(__file__).resolve().parents[1]
-sys.path.insert(0, str(ROOT))
+pkg = types.ModuleType("popagent_vision_test")
+pkg.__path__ = [str(ROOT)]
+sys.modules["popagent_vision_test"] = pkg
+
+agent_pkg = types.ModuleType("popagent_vision_test.agent_core")
+agent_pkg.__path__ = [str(ROOT / "agent_core")]
+sys.modules["popagent_vision_test.agent_core"] = agent_pkg
 
 spec = importlib.util.spec_from_file_location(
-    "message_builder", ROOT / "agent_core" / "message_builder.py"
+    "popagent_vision_test.agent_core.message_builder",
+    ROOT / "agent_core" / "message_builder.py",
 )
 message_builder = importlib.util.module_from_spec(spec)
-sys.modules["message_builder"] = message_builder
+sys.modules[spec.name] = message_builder
 spec.loader.exec_module(message_builder)
 
 MessageBuilder = message_builder.MessageBuilder

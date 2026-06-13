@@ -22,6 +22,7 @@ import inspect
 dependencies_installed = False
 pip_installed = False
 httpx_installed = False
+yaml_installed = False
 
 
 class Dependencies:
@@ -31,6 +32,7 @@ class Dependencies:
         global dependencies_installed
         global pip_installed
         global httpx_installed
+        global yaml_installed
 
         print("Checking python package httpx installation...")
         try:
@@ -51,14 +53,23 @@ class Dependencies:
             print(e)
             httpx_installed = False
 
-        dependencies_installed = pip_installed and httpx_installed
+        try:
+            import yaml
+
+            print("yaml imported from ", inspect.getfile(yaml))
+            yaml_installed = True
+        except ImportError as e:
+            print(e)
+            yaml_installed = False
+
+        dependencies_installed = pip_installed and httpx_installed and yaml_installed
 
         return dependencies_installed
 
     @staticmethod
     def install_dependencies(force: bool = False):
 
-        async def install_package(package: str, force: bool):
+        async def install_packages(packages: list[str], force: bool):
 
             global dependencies_installed
             dependencies_installed = False
@@ -112,14 +123,14 @@ class Dependencies:
                             "pip",
                             "install",
                             "--upgrade",
-                            package,
+                            *packages,
                             "--user",
                         ]
                     )
                     dependencies_installed = True
                 except Exception as e:
                     print(e)
-                    print(f"Error installing python package {package}.")
+                    print(f"Error installing python packages: {packages}.")
                     dependencies_installed = False
 
             # Add site packages path to sys.path
@@ -135,6 +146,8 @@ class Dependencies:
         # get_event_loop() no longer auto-creates one (raises RuntimeError).
         loop = asyncio.new_event_loop()
         try:
-            loop.run_until_complete(install_package("httpx==0.24.0", force))
+            loop.run_until_complete(
+                install_packages(["httpx==0.24.0", "PyYAML==6.0.2"], force)
+            )
         finally:
             loop.close()

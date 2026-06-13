@@ -1,12 +1,12 @@
 """
-Agent meta-skills: let the LLM introspect its own available skills at runtime.
+Let the LLM introspect registered callable tools at runtime.
 
-Read-only against the process-level skill registry. No bpy dependency, so the
+Read-only against the process-level callable-tool registry. No bpy dependency, so the
 handler can run on the main thread cheaply.
 
-Why this exists: without it, every skill's full JSON schema must be packed into
-the system prompt up front. list_skills lets the model fetch a compact catalog
-and pull one skill's full schema on demand instead.
+Why this exists: without it, every callable tool's full JSON schema must be
+packed into the request up front. The legacy `agent.list_skills` API lets the
+model fetch a compact catalog and pull one tool's full schema on demand.
 """
 
 from __future__ import annotations
@@ -67,9 +67,10 @@ def _handler_list_skills(context=None, name: str = "", owner: str = "") -> dict:
 LIST_SKILLS = {
     "name": "agent.list_skills",
     "description": (
-        "List the agent's currently available skills. Without arguments, returns a "
-        "compact catalog (name, owner, description, safety flags) for every enabled "
-        "skill. Pass 'name' to fetch one skill's full parameter schema and metadata. "
+        "List the agent's currently available callable tools. This is the legacy "
+        "function-tool registry, not the agentskills.io Agent Skill catalog. Without "
+        "arguments, returns a compact catalog for every enabled callable tool. Pass "
+        "'name' to fetch one tool's full parameter schema and metadata. "
         "Pass 'owner' to filter the catalog by owner prefix (e.g. 'poptools', 'builtin')."
     ),
     "parameters": {
