@@ -34,10 +34,12 @@ def test_renderset_skill_is_discovered_from_bundled_root():
     assert record["compatibility"].startswith("Blender 5.1+")
     assert record["metadata"] == {
         "author": "t7597-team",
-        "version": "2.0.0",
+        "version": "2.3.0",
     }
     assert "Never click `Render All`" in record["body"]
     assert "`renderset.prepare`" in record["body"]
+    assert "`mcp__blender.execute_blender_code`" in record["body"]
+    assert "POPAgent.builtin_skills.renderset_tools" in record["body"]
     assert "dev.run_python" in record["body"]
 
 

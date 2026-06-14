@@ -129,6 +129,62 @@ def test_plan_uses_semantic_names_but_preserves_real_collection_paths():
     assert dock["target_path"] == "区域/区域一.001/码头.001"
 
 
+def test_plan_migrates_one_high_confidence_legacy_context():
+    snapshot = _snapshot()
+    snapshot["existing_context_names"] = [
+        "测试岛旧版本区域一_大门",
+    ]
+
+    plan = planner.build_context_plan(snapshot)
+    gate = next(
+        item for item in plan["contexts"]
+        if item["name"] == "测试岛区域一_大门"
+    )
+
+    assert gate["operation"] == "migrate"
+    assert gate["source_name"] == "测试岛旧版本区域一_大门"
+    assert plan["duplicate_contexts"] == []
+    assert plan["unmatched_contexts"] == []
+
+
+def test_plan_reports_safe_duplicate_when_canonical_context_exists():
+    snapshot = _snapshot()
+    snapshot["existing_context_names"] = [
+        "测试岛区域一_大门",
+        "测试岛旧版本区域一_大门",
+    ]
+
+    plan = planner.build_context_plan(snapshot)
+
+    assert plan["duplicate_contexts"] == [{
+        "name": "测试岛旧版本区域一_大门",
+        "canonical_name": "测试岛区域一_大门",
+        "confidence": "high",
+        "recommended_action": "delete_after_confirmation",
+    }]
+
+
+def test_plan_keeps_ambiguous_legacy_context_unmatched():
+    snapshot = _snapshot()
+    snapshot["existing_context_names"] = [
+        "测试岛旧版区域一_大门",
+        "测试岛备份区域一_大门",
+        "区域二建筑",
+    ]
+
+    plan = planner.build_context_plan(snapshot)
+    gate = next(
+        item for item in plan["contexts"]
+        if item["name"] == "测试岛区域一_大门"
+    )
+
+    assert "source_name" not in gate
+    assert plan["blocking_ambiguities"] == []
+    assert plan["duplicate_contexts"] == []
+    assert plan["unmatched_contexts"] == snapshot["existing_context_names"]
+    assert plan["warnings"][-1]["kind"] == "ambiguous_legacy_contexts"
+
+
 def test_transaction_does_not_mutate_when_plan_needs_input():
     class Adapter:
         def __init__(self):
@@ -163,6 +219,14 @@ def test_transaction_rolls_back_on_validation_failure():
         def apply_spec(self, spec):
             self.calls.append(("apply", spec["name"]))
             return "created"
+
+        def apply_context_selection_policy(self, specs):
+            self.calls.append("selection_policy")
+            return []
+
+        def audit_context_selection_policy(self, specs):
+            self.calls.append("selection_audit")
+            return []
 
         def audit_specs(self, specs):
             self.calls.append("audit")
@@ -200,7 +264,15 @@ def test_transaction_saves_only_after_successful_audit():
 
         def apply_spec(self, spec):
             self.calls.append(("apply", spec["name"]))
-            return "updated"
+            return "migrated" if spec.get("operation") == "migrate" else "updated"
+
+        def apply_context_selection_policy(self, specs):
+            self.calls.append("selection_policy")
+            return ["旧任务"]
+
+        def audit_context_selection_policy(self, specs):
+            self.calls.append("selection_audit")
+            return [{"name": "旧任务", "ok": True, "errors": []}]
 
         def audit_specs(self, specs):
             self.calls.append("audit")
@@ -219,11 +291,30 @@ def test_transaction_saves_only_after_successful_audit():
     adapter = Adapter()
     result = planner.execute_plan(
         adapter,
-        {"contexts": [{"name": "测试"}], "blocking_ambiguities": []},
+        {
+            "contexts": [
+                {
+                    "name": "测试",
+                    "operation": "migrate",
+                    "source_name": "旧测试",
+                }
+            ],
+            "blocking_ambiguities": [],
+            "duplicate_contexts": [{"name": "重复测试"}],
+            "unmatched_contexts": ["模糊测试"],
+        },
     )
 
     assert result["status"] == "success"
     assert result["saved"] is True
+    assert result["migrated"] == [
+        {"from": "旧测试", "to": "测试"}
+    ]
+    assert result["updated"] == ["旧任务"]
+    assert result["duplicate_contexts"] == [{"name": "重复测试"}]
+    assert result["unmatched_contexts"] == ["模糊测试"]
+    assert adapter.calls.index("audit") < adapter.calls.index("selection_policy")
+    assert adapter.calls.index("selection_policy") < adapter.calls.index("selection_audit")
     assert adapter.calls[-2:] == ["restore", "save"]
     assert not any(call[0] == "rollback" for call in adapter.calls if isinstance(call, tuple))
 

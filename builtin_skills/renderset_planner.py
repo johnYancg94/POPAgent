@@ -83,6 +83,52 @@ def _dedupe_ambiguities(items):
     return result
 
 
+def _classify_legacy_contexts(contexts, existing_names, prefix):
+    existing = list(existing_names)
+    existing_set = set(existing)
+    consumed = set()
+    duplicates = []
+    warnings = []
+
+    for spec in contexts:
+        canonical = spec["name"]
+        semantic_tail = canonical[len(prefix):]
+        aliases = [
+            name for name in existing
+            if name != canonical and name.endswith(semantic_tail)
+        ]
+        if canonical in existing_set:
+            consumed.add(canonical)
+            for alias in aliases:
+                consumed.add(alias)
+                duplicates.append({
+                    "name": alias,
+                    "canonical_name": canonical,
+                    "confidence": "high",
+                    "recommended_action": "delete_after_confirmation",
+                })
+            continue
+        if len(aliases) == 1:
+            source_name = aliases[0]
+            consumed.add(source_name)
+            spec["operation"] = "migrate"
+            spec["source_name"] = source_name
+        elif len(aliases) > 1:
+            warnings.append({
+                "kind": "ambiguous_legacy_contexts",
+                "target": canonical,
+                "candidates": aliases,
+                "message": (
+                    "Multiple legacy Contexts match this canonical task; "
+                    "created or updated the canonical Context and left the "
+                    "legacy Contexts disabled."
+                ),
+            })
+
+    unmatched = [name for name in existing if name not in consumed]
+    return duplicates, unmatched, warnings
+
+
 def build_context_plan(snapshot):
     """Compile a scene snapshot into deterministic ContextSpec dictionaries."""
     started = perf_counter()
@@ -94,6 +140,8 @@ def build_context_plan(snapshot):
             "contexts": [],
             "blocking_ambiguities": ambiguities,
             "warnings": list(snapshot.get("warnings", [])),
+            "duplicate_contexts": [],
+            "unmatched_contexts": list(snapshot.get("existing_context_names", [])),
             "timings": {"plan_ms": round((perf_counter() - started) * 1000, 3)},
         }
 
@@ -176,10 +224,18 @@ def build_context_plan(snapshot):
                     )
                 )
 
+    duplicates, unmatched, migration_warnings = _classify_legacy_contexts(
+        contexts,
+        snapshot.get("existing_context_names", []),
+        prefix,
+    )
+
     return {
         "contexts": contexts,
         "blocking_ambiguities": [],
-        "warnings": list(snapshot.get("warnings", [])),
+        "warnings": list(snapshot.get("warnings", [])) + migration_warnings,
+        "duplicate_contexts": duplicates,
+        "unmatched_contexts": unmatched,
         "timings": {"plan_ms": round((perf_counter() - started) * 1000, 3)},
     }
 
@@ -189,10 +245,13 @@ def _base_result(status, plan):
         "status": status,
         "created": [],
         "updated": [],
+        "migrated": [],
         "skipped": [],
         "failed": [],
         "blocking_ambiguities": list(plan.get("blocking_ambiguities", [])),
         "warnings": list(plan.get("warnings", [])),
+        "duplicate_contexts": list(plan.get("duplicate_contexts", [])),
+        "unmatched_contexts": list(plan.get("unmatched_contexts", [])),
         "validation_results": [],
         "timings": dict(plan.get("timings", {})),
         "saved": False,
@@ -218,7 +277,15 @@ def execute_plan(adapter, plan):
         apply_started = perf_counter()
         for spec in plan.get("contexts", []):
             operation = adapter.apply_spec(spec)
-            result["created" if operation == "created" else "updated"].append(spec["name"])
+            if operation == "created":
+                result["created"].append(spec["name"])
+            elif operation == "migrated":
+                result["migrated"].append({
+                    "from": spec["source_name"],
+                    "to": spec["name"],
+                })
+            else:
+                result["updated"].append(spec["name"])
         result["timings"]["apply_ms"] = round(
             (perf_counter() - apply_started) * 1000, 3
         )
@@ -233,6 +300,30 @@ def execute_plan(adapter, plan):
         if failed:
             result["failed"] = [item.get("name", "unknown") for item in failed]
             raise RuntimeError("RenderSet validation failed")
+
+        selection_started = perf_counter()
+        selection_updates = adapter.apply_context_selection_policy(
+            plan.get("contexts", [])
+        )
+        result["updated"].extend(
+            name for name in selection_updates
+            if name not in result["updated"]
+        )
+        selection_validation = adapter.audit_context_selection_policy(
+            plan.get("contexts", [])
+        )
+        result["validation_results"].extend(selection_validation)
+        result["timings"]["selection_policy_ms"] = round(
+            (perf_counter() - selection_started) * 1000, 3
+        )
+        selection_failed = [
+            item for item in selection_validation if not item.get("ok")
+        ]
+        if selection_failed:
+            result["failed"] = [
+                item.get("name", "unknown") for item in selection_failed
+            ]
+            raise RuntimeError("RenderSet selection-policy validation failed")
 
         adapter.restore_original_context()
         save_started = perf_counter()

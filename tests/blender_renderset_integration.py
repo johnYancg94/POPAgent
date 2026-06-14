@@ -59,9 +59,10 @@ def _cube(name, parent, x=0.0):
 def _build_scene():
     scene = bpy.data.scenes.new("POPAgent RenderSet Integration")
     scene_root = _collection("场景", scene.collection)
-    region_root = _collection("区域", scene.collection)
-    terrain_root = _collection("地形", scene.collection)
-    particle_root = _collection("粒子", scene.collection)
+    region_root = _collection("测试岛区域建筑", scene.collection)
+    terrain_root = _collection("测试岛地形", scene.collection)
+    particle_root = _collection("粒子实例、资产", scene.collection)
+    misc_root = _collection("杂项", scene.collection)
     region_one = _collection("区域一", region_root)
     region_two = _collection("区域二", region_root)
     dock = _collection("码头", region_one)
@@ -75,6 +76,7 @@ def _build_scene():
     overall_terrain_detail = _collection("整体地形细节", overall_terrain)
     water = _collection("水面", scene.collection)
     scatter = _collection("植被散布", particle_root)
+    misc_assets = _collection("临时资产", misc_root)
 
     _camera("整体场景相机", scene_root, 100)
     _camera("区域一相机", scene_root, 50)
@@ -86,11 +88,12 @@ def _build_scene():
     _cube("地形块", overall_terrain_detail)
     _cube("水面块", water)
     _cube("散布块", scatter)
+    _cube("临时资产块", misc_assets)
     return scene
 
 
 def _run_once(context):
-    snapshot = renderset_tools._scan_scene(context, {"project_prefix": "测试岛"})
+    snapshot = renderset_tools._scan_scene(context, {})
     plan = renderset_planner.build_context_plan(snapshot)
     assert not plan["blocking_ambiguities"], plan["blocking_ambiguities"]
     adapter = renderset_tools._RenderSetAdapter(context, snapshot)
@@ -100,7 +103,9 @@ def _run_once(context):
         return "TEMP_NO_SAVE"
 
     adapter.save = no_disk_save
-    return renderset_planner.execute_plan(adapter, plan)
+    result = renderset_planner.execute_plan(adapter, plan)
+    assert result["status"] == "success", result
+    return result
 
 
 def _switch_context(scene, name):
@@ -132,7 +137,7 @@ def _collection_layers(scene, collection_name):
 
 def _assert_recursive_collection_states(scene):
     _switch_context(scene, "测试岛整体场景_地形_shadow")
-    terrain_layers = _collection_layers(scene, "地形")
+    terrain_layers = _collection_layers(scene, "测试岛地形")
     assert all(layer.indirect_only for layer in terrain_layers), [
         layer.name for layer in terrain_layers if not layer.indirect_only
     ]
@@ -144,7 +149,7 @@ def _assert_recursive_collection_states(scene):
     ]
 
     _switch_context(scene, "测试岛区域一_码头")
-    terrain_layers = _collection_layers(scene, "地形")
+    terrain_layers = _collection_layers(scene, "测试岛地形")
     assert all(layer.indirect_only and layer.holdout for layer in terrain_layers), [
         layer.name
         for layer in terrain_layers
@@ -158,20 +163,99 @@ def _assert_recursive_collection_states(scene):
     ]
 
 
+def _assert_preview_only_auxiliary_collections(scene):
+    for name in ("测试岛整体场景_完整体", "测试岛区域一_完整预览"):
+        _switch_context(scene, name)
+        for collection_name in ("粒子实例、资产", "杂项"):
+            layers = _collection_layers(scene, collection_name)
+            assert all(
+                not layer.exclude and not layer.collection.hide_render
+                for layer in layers
+            ), (name, collection_name)
+
+    for name in (
+        "测试岛整体场景_地形",
+        "测试岛整体场景_地形_shadow",
+        "测试岛区域一_shadow",
+        "测试岛区域一_码头",
+    ):
+        _switch_context(scene, name)
+        for collection_name in ("粒子实例、资产", "杂项"):
+            layers = _collection_layers(scene, collection_name)
+            assert all(
+                layer.exclude and layer.collection.hide_render
+                for layer in layers
+            ), (name, collection_name)
+
+
 scene = _build_scene()
 with bpy.context.temp_override(scene=scene, view_layer=scene.view_layers[0]):
+    inferred_prefix, prefix_issues = renderset_tools._infer_prefix(
+        scene,
+        [collection.name for collection in bpy.data.collections],
+        [],
+        {},
+    )
+    assert inferred_prefix == "测试岛"
+    assert prefix_issues == []
+    missing_prefix, missing_issues = renderset_tools._infer_prefix(
+        bpy.data.scenes.new("No Island Clue"),
+        ["区域", "地形"],
+        [],
+        {},
+    )
+    assert missing_prefix is None
+    assert missing_issues[0]["kind"] == "missing_project_prefix"
+    invalid_prefix, invalid_issues = renderset_tools._infer_prefix(
+        scene,
+        [],
+        [],
+        {"project_prefix": "测试项目"},
+    )
+    assert invalid_prefix is None
+    assert invalid_issues[0]["kind"] == "invalid_project_prefix"
+
+    scene.renderset_contexts.add()
+    legacy = scene.renderset_contexts[-1]
+    legacy.init_default(bpy.context)
+    legacy.custom_name = "旧测试任务"
+    legacy.include_in_render_all = True
+    legacy.sync(bpy.context)
+    scene.renderset_contexts.add()
+    migration_source = scene.renderset_contexts[-1]
+    migration_source.init_default(bpy.context)
+    migration_source.custom_name = "测试岛旧版本区域二_仓库"
+    migration_source.include_in_render_all = True
+    migration_source.sync(bpy.context)
     first = _run_once(bpy.context)
     _assert_recursive_collection_states(scene)
+    _assert_preview_only_auxiliary_collections(scene)
+    assert next(
+        item for item in scene.renderset_contexts
+        if item.custom_name == "旧测试任务"
+    ).include_in_render_all is False
+    assert not any(
+        item.custom_name == "测试岛旧版本区域二_仓库"
+        for item in scene.renderset_contexts
+    )
+    assert any(
+        item.custom_name == "测试岛区域二_仓库"
+        for item in scene.renderset_contexts
+    )
     second = _run_once(bpy.context)
     save_path = os.path.join(tempfile.gettempdir(), "popagent_renderset_integration.blend")
     bpy.ops.wm.save_as_mainfile(filepath=save_path)
     saved = renderset_tools._handler_prepare(
         context=bpy.context,
-        decisions={"project_prefix": "测试岛"},
+        decisions={},
+    )
+    audited = renderset_tools._handler_audit(
+        context=bpy.context,
+        decisions={},
     )
     baseline_names = [item.custom_name for item in scene.renderset_contexts]
     rollback_snapshot = renderset_tools._scan_scene(
-        bpy.context, {"project_prefix": "测试岛"}
+        bpy.context, {}
     )
     rollback_plan = renderset_planner.build_context_plan(rollback_snapshot)
     rollback_adapter = renderset_tools._RenderSetAdapter(
@@ -192,6 +276,7 @@ summary = {
         "status": first["status"],
         "created": len(first["created"]),
         "updated": len(first["updated"]),
+        "migrated": first["migrated"],
         "failed": first["failed"],
         "total_ms": first["timings"]["total_ms"],
     },
@@ -209,6 +294,10 @@ summary = {
         "path_exists": os.path.isfile(save_path),
         "total_ms": saved["timings"].get("handler_total_ms"),
     },
+    "audit": {
+        "status": audited["status"],
+        "validation_count": len(audited["validation_results"]),
+    },
     "rollback": {
         "status": rolled_back["status"],
         "rolled_back": rolled_back.get("rolled_back"),
@@ -219,12 +308,18 @@ print("POPAGENT_RENDERSET_INTEGRATION=" + json.dumps(summary, ensure_ascii=False
 
 assert first["status"] == "success", first
 assert second["status"] == "success", second
-assert len(first["created"]) == 10
+assert len(first["created"]) == 9
+assert first["migrated"] == [{
+    "from": "测试岛旧版本区域二_仓库",
+    "to": "测试岛区域二_仓库",
+}]
 assert len(second["created"]) == 0
 assert len(second["updated"]) == 10
-assert len(scene.renderset_contexts) == 10
+assert len(scene.renderset_contexts) == 11
 assert saved["status"] == "success", saved
 assert saved["saved"] is True
+assert audited["status"] == "success", audited
+assert len(audited["validation_results"]) == 11
 assert os.path.isfile(save_path)
 assert rolled_back["status"] == "failed", rolled_back
 assert rolled_back["rolled_back"] is True, rolled_back

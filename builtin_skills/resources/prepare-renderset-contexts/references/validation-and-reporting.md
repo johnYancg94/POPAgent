@@ -16,6 +16,8 @@ Switch to each created or updated context and verify:
 - single-building and front-layer contexts set both Holdout and Indirect Only on the complete water subtree, including a top-level `水面`;
 - particles match the context type;
 - Include in Render All is correct;
+- every unrelated pre-existing Context has Include in Render All disabled;
+- `粒子实例、资产` and `杂项` are enabled only in complete preview Contexts;
 - normal sampling is `600 / 0.0`;
 - Shadow sampling is `100 / 0.005`;
 - adaptive sampling remains enabled;
@@ -63,6 +65,9 @@ Its almost full-width border was caused by unrelated small objects inside the co
 - If a setting cannot be persisted through RenderSet Pro, report the property and do not claim success.
 - If any critical write, audit, restore, or save step fails, the whole preparation transaction rolls back.
 - Do not start a test render as validation.
+- Report migrated Contexts as `from` and `to` names.
+- Report high-confidence duplicate candidates separately from unmatched legacy
+  Contexts. Neither category is deleted automatically.
 
 ## Report Template
 
@@ -71,6 +76,9 @@ Its almost full-width border was caused by unrelated small objects inside the co
 
 - 新建 context：0
 - 更新 context：0
+- 迁移并规范化 context：0
+- 待确认删除的重复 context：0
+- 未识别的遗留 context：0
 - 跳过 context：0
 - 验证失败：0
 - 当前 Render All 已勾选：0

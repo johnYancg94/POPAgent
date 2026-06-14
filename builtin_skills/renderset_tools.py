@@ -6,6 +6,7 @@ import os
 import re
 import time
 from collections import Counter
+from pathlib import Path
 
 import bpy
 from bpy_extras.object_utils import world_to_camera_view
@@ -50,10 +51,13 @@ def _result(status, *, started, **extra):
         "status": status,
         "created": [],
         "updated": [],
+        "migrated": [],
         "skipped": [],
         "failed": [],
         "blocking_ambiguities": [],
         "warnings": [],
+        "duplicate_contexts": [],
+        "unmatched_contexts": [],
         "validation_results": [],
         "timings": {"total_ms": round((time.perf_counter() - started) * 1000, 3)},
         "saved": False,
@@ -139,20 +143,61 @@ def _resolve_camera(cameras, label, decisions, *, overall=False):
     }]
 
 
-def _infer_prefix(scene, region_names, existing_names, decisions):
+def _island_prefix_candidates(values):
+    candidates = []
+    for value in values:
+        match = re.search(r"([A-Za-z0-9\u4e00-\u9fff]+?岛)", str(value))
+        if match:
+            candidates.append(match.group(1))
+    return candidates
+
+
+def _choose_island_prefix(values):
+    counts = Counter(_island_prefix_candidates(values))
+    if not counts:
+        return None, []
+    top_count = max(counts.values())
+    winners = sorted(name for name, count in counts.items() if count == top_count)
+    return (winners[0] if len(winners) == 1 else None), winners
+
+
+def _infer_prefix(scene, collection_names, existing_names, decisions):
     explicit = decisions.get("project_prefix", "") if isinstance(decisions, dict) else ""
     if explicit:
-        return explicit
-    markers = ["整体场景"] + list(region_names)
-    for context_name in existing_names:
-        for marker in markers:
-            token = f"{marker}_"
-            if token in context_name:
-                return context_name.split(token, 1)[0]
-    stem = os.path.splitext(os.path.basename(bpy.data.filepath))[0]
-    if stem:
-        return stem
-    return scene.name
+        explicit = explicit.strip()
+        if explicit.endswith("岛"):
+            return explicit, []
+        return None, [{
+            "kind": "invalid_project_prefix",
+            "target": explicit,
+            "message": "RenderSet project prefix must end with 岛",
+        }]
+
+    source_groups = (
+        ("collections", collection_names),
+        (
+            "project",
+            [scene.name]
+            + list(Path(bpy.data.filepath).parts if bpy.data.filepath else ()),
+        ),
+        ("existing_contexts", existing_names),
+    )
+    for source, values in source_groups:
+        prefix, candidates = _choose_island_prefix(values)
+        if prefix:
+            return prefix, []
+        if candidates:
+            return None, [{
+                "kind": "ambiguous_project_prefix",
+                "target": "XX岛",
+                "source": source,
+                "candidates": candidates,
+            }]
+    return None, [{
+        "kind": "missing_project_prefix",
+        "target": "XX岛",
+        "message": "No collection, project, scene, or existing Context contains an XX岛 clue",
+    }]
 
 
 def _scan_scene(context, decisions=None):
@@ -172,6 +217,9 @@ def _scan_scene(context, decisions=None):
     particle_root, particle_issues = _find_named_collection(top_level, "粒子")
     if particle_issues:
         warnings.extend(particle_issues)
+    misc_root, misc_issues = _find_named_collection(top_level, "杂项")
+    if misc_issues:
+        warnings.extend(misc_issues)
 
     cameras = [obj for obj in scene.objects if obj.type == "CAMERA"]
     overall_camera, issues = _resolve_camera(cameras, "整体场景", decisions, overall=True)
@@ -305,9 +353,15 @@ def _scan_scene(context, decisions=None):
                 "candidates": [collection.name for collection in top_level_water],
             })
 
-    region_names = [region["name"] for region in regions]
+    project_prefix, prefix_issues = _infer_prefix(
+        scene,
+        [collection.name for collection in paths.values()],
+        existing_names,
+        decisions,
+    )
+    blockers.extend(prefix_issues)
     snapshot = {
-        "project_prefix": _infer_prefix(scene, region_names, existing_names, decisions),
+        "project_prefix": project_prefix,
         "overall_camera": overall_camera,
         "regions": regions,
         "overall_terrain": overall_terrain,
@@ -326,6 +380,7 @@ def _scan_scene(context, decisions=None):
             "terrain": terrain_root.name if terrain_root else None,
             "water": water,
             "particle": particle_root.name if particle_root else None,
+            "misc": misc_root.name if misc_root else None,
         },
     }
     return snapshot
@@ -630,6 +685,7 @@ class _RenderSetAdapter:
             self.roots["terrain"],
             self.roots["water"],
             self.roots["particle"],
+            self.roots["misc"],
         ):
             if not root_name:
                 continue
@@ -658,6 +714,14 @@ class _RenderSetAdapter:
     def _apply_collection_matrix(self, spec):
         self._reset_managed_collections()
         kind = spec["kind"]
+        auxiliary_enabled = kind in {"overall_preview", "region_preview"}
+        for root_name in (self.roots["particle"], self.roots["misc"]):
+            if root_name:
+                _set_layer_state(
+                    self._layer(root_name),
+                    enabled=auxiliary_enabled,
+                    recursive=True,
+                )
         if kind in {"overall_terrain", "overall_terrain_shadow"}:
             _set_layer_state(
                 self._layer(self.roots["region"]), enabled=False, recursive=True
@@ -727,6 +791,7 @@ class _RenderSetAdapter:
                 self.roots["terrain"],
                 self.roots["water"],
                 self.roots["particle"],
+                self.roots["misc"],
             ) if root
         )
         for path in self.paths:
@@ -753,6 +818,14 @@ class _RenderSetAdapter:
                 })
 
         kind = spec["kind"]
+        auxiliary_enabled = kind in {"overall_preview", "region_preview"}
+        for root_name in (self.roots["particle"], self.roots["misc"]):
+            if root_name:
+                set_state(
+                    root_name,
+                    enabled=auxiliary_enabled,
+                    recursive=True,
+                )
         if kind in {"overall_terrain", "overall_terrain_shadow"}:
             set_state(self.roots["region"], enabled=False, recursive=True)
         if kind == "overall_terrain_shadow":
@@ -855,6 +928,15 @@ class _RenderSetAdapter:
     def apply_spec(self, spec):
         index = self._find_context(spec["name"])
         created = index is None
+        migrated = False
+        if created and spec.get("source_name"):
+            index = self._find_context(spec["source_name"])
+            if index is None:
+                raise RuntimeError(
+                    f"Context migration source not found: {spec['source_name']}"
+                )
+            created = False
+            migrated = True
         if created:
             source_index = (
                 self.scene.renderset_context_index
@@ -890,7 +972,20 @@ class _RenderSetAdapter:
         self._ensure_stored_settings(item)
         item.sync(self.context)
         self.expected_states[spec["name"]] = self._planned_expected_states(spec)
+        if migrated:
+            return "migrated"
         return "created" if created else "updated"
+
+    def apply_context_selection_policy(self, specs):
+        planned_names = {spec["name"] for spec in specs}
+        updated = []
+        for index in self._context_search_indexes():
+            item = self.scene.renderset_contexts[index]
+            if item.custom_name in planned_names or not item.include_in_render_all:
+                continue
+            item.include_in_render_all = False
+            updated.append(item.custom_name)
+        return updated
 
     def _audit_one(self, spec):
         index = self._find_context(spec["name"])
@@ -965,6 +1060,25 @@ class _RenderSetAdapter:
         if 0 <= active_index < len(self.scene.renderset_contexts):
             self.scene.renderset_contexts[active_index].apply(self.context)
         return [self._audit_one(spec) for spec in specs]
+
+    def audit_context_selection_policy(self, specs):
+        validation = []
+        planned_names = {spec["name"] for spec in specs}
+        for index in self._context_search_indexes():
+            item = self.scene.renderset_contexts[index]
+            if item.custom_name in planned_names:
+                continue
+            enabled = bool(item.include_in_render_all)
+            validation.append({
+                "name": item.custom_name,
+                "ok": not enabled,
+                "errors": (
+                    ["Unrelated Context is included in Render All"]
+                    if enabled else []
+                ),
+                "warnings": [],
+            })
+        return validation
 
     def restore_original_context(self):
         if self.original_count:
@@ -1044,6 +1158,8 @@ def _handler_inspect(context=None, decisions=None):
         started=started,
         blocking_ambiguities=plan["blocking_ambiguities"],
         warnings=plan["warnings"],
+        duplicate_contexts=plan["duplicate_contexts"],
+        unmatched_contexts=plan["unmatched_contexts"],
         timings={**plan["timings"], "total_ms": round((time.perf_counter() - started) * 1000, 3)},
         context_plan=plan["contexts"],
         scene_summary={
@@ -1085,6 +1201,8 @@ def _handler_prepare(context=None, decisions=None):
             started=started,
             blocking_ambiguities=plan["blocking_ambiguities"],
             warnings=plan["warnings"],
+            duplicate_contexts=plan["duplicate_contexts"],
+            unmatched_contexts=plan["unmatched_contexts"],
             context_plan=plan["contexts"],
         )
     adapter = _RenderSetAdapter(context, snapshot)
@@ -1114,6 +1232,8 @@ def _handler_audit(context=None, decisions=None):
             started=started,
             blocking_ambiguities=plan["blocking_ambiguities"],
             warnings=plan["warnings"],
+            duplicate_contexts=plan["duplicate_contexts"],
+            unmatched_contexts=plan["unmatched_contexts"],
         )
     adapter = _RenderSetAdapter(context, snapshot)
     adapter.expected_states = {
@@ -1123,6 +1243,9 @@ def _handler_audit(context=None, decisions=None):
     original_index = int(context.scene.renderset_context_index)
     try:
         validation = adapter.audit_specs(plan["contexts"])
+        validation.extend(
+            adapter.audit_context_selection_policy(plan["contexts"])
+        )
     finally:
         if len(context.scene.renderset_contexts):
             context.scene.renderset_context_index = min(
@@ -1138,6 +1261,8 @@ def _handler_audit(context=None, decisions=None):
         started=started,
         failed=failed,
         warnings=warnings,
+        duplicate_contexts=plan["duplicate_contexts"],
+        unmatched_contexts=plan["unmatched_contexts"],
         validation_results=validation,
     )
 
