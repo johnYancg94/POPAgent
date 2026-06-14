@@ -9,11 +9,17 @@ handler 必须跑在 bg worker（requires_main_thread=False），不能在主线
 from __future__ import annotations
 import bpy
 import concurrent.futures
-from bpy.props import StringProperty
+from bpy.props import EnumProperty, StringProperty
 
 from .main_thread import run_on_main
 
 _pending_answer: concurrent.futures.Future | None = None
+_choice_items_cache: list[tuple[str, str, str]] = []
+
+
+def _choice_items(self, context):
+    del self, context
+    return _choice_items_cache
 
 
 class POPAGENT_OT_ask_human(bpy.types.Operator):
@@ -21,12 +27,27 @@ class POPAGENT_OT_ask_human(bpy.types.Operator):
     bl_idname = "popagent.ask_human"
     bl_label = "POPAgent 需要澄清"
     bl_options = {"INTERNAL"}
+    bl_property = "choice"
 
     question: StringProperty(default="")
     options_csv: StringProperty(default="")
     answer: StringProperty(name="你的回答", default="")
+    choice: EnumProperty(name="请选择", items=_choice_items)
 
     def invoke(self, context, event):
+        global _choice_items_cache
+        if self.options_csv.strip():
+            options = [o for o in self.options_csv.split("\n") if o.strip()]
+            _choice_items_cache = [
+                ("", self.question[:80], ""),
+                *[
+                    (f"OPTION_{index}", option[:80], option)
+                    for index, option in enumerate(options)
+                ],
+                ("__CUSTOM__", "自由输入...", "输入列表之外的回答"),
+            ]
+            context.window_manager.invoke_search_popup(self)
+            return {"RUNNING_MODAL"}
         return context.window_manager.invoke_props_dialog(self, width=460)
 
     def draw(self, context):
@@ -35,17 +56,23 @@ class POPAGENT_OT_ask_human(bpy.types.Operator):
         for line in self.question.split("\n"):
             col.label(text=line[:80])
         col.separator()
-        opts = [o for o in self.options_csv.split("\n") if o.strip()]
-        if opts:
-            col.label(text="快捷选项（点击直接回答）:")
-            for opt in opts:
-                op = col.operator("popagent.ask_human_pick", text=opt[:60])
-                op.value = opt
-            col.separator()
-            col.label(text="或自由输入（覆盖上面选项）:")
         col.prop(self, "answer")
 
     def execute(self, context):
+        if self.options_csv.strip():
+            if self.choice == "__CUSTOM__":
+                bpy.ops.popagent.ask_human_custom(
+                    "INVOKE_DEFAULT",
+                    question=self.question,
+                )
+                return {"FINISHED"}
+            if self.choice.startswith("OPTION_"):
+                index = int(self.choice.removeprefix("OPTION_"))
+                options = [o for o in self.options_csv.split("\n") if o.strip()]
+                if index < len(options):
+                    _resolve(options[index])
+                    return {"FINISHED"}
+            return {"CANCELLED"}
         _resolve(self.answer)
         return {"FINISHED"}
 
@@ -53,15 +80,15 @@ class POPAGENT_OT_ask_human(bpy.types.Operator):
         _resolve("")
 
 
-class POPAGENT_OT_ask_human_pick(bpy.types.Operator):
-    """点击某快捷选项 → 直接以该选项作答并关闭对话框。"""
-    bl_idname = "popagent.ask_human_pick"
-    bl_label = "选择"
+class POPAGENT_OT_ask_human_custom(bpy.types.Operator):
+    """Open the free-text answer dialog."""
+    bl_idname = "popagent.ask_human_custom"
+    bl_label = "自由输入"
     bl_options = {"INTERNAL"}
-    value: StringProperty(default="")
+    question: StringProperty(default="")
 
     def execute(self, context):
-        _resolve(self.value)
+        bpy.ops.popagent.ask_human("INVOKE_DEFAULT", question=self.question)
         return {"FINISHED"}
 
 
