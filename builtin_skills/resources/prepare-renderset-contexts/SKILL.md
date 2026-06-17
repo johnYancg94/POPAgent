@@ -5,7 +5,7 @@ license: MIT
 compatibility: Blender 5.1+, RenderSet Pro 2.x, and Blender Python access such as Blender MCP
 metadata:
   author: t7597-team
-  version: "2.3.0"
+  version: "2.4.0"
 ---
 
 # Prepare RenderSet Pro Contexts
@@ -93,12 +93,16 @@ from the user instead of inventing a prefix.
 
 ### 4. Report the Native Result
 
-Report `created`, `updated`, `migrated`, `duplicate_contexts`,
-`unmatched_contexts`, `skipped`, `failed`, `warnings`,
-`validation_results`, `saved`, and stage timings. A successful
-`renderset.prepare` has already restored the original Context and saved the
-`.blend`; do not call another save tool. Treat `duplicate_contexts` as
-delete-after-confirmation candidates, not permission to delete them.
+Lead the answer with any Render Region / crop-border anomalies affecting
+single-building or front-layer contexts. Use the `⚠️` symbol in the heading and
+each affected building line so those items cannot be missed.
+
+Then report `created`, `updated`, `migrated`, `duplicate_contexts`,
+`unmatched_contexts`, `skipped`, `failed`, `warnings`, `validation_results`,
+`saved`, and stage timings. A successful `renderset.prepare` has already
+restored the original Context and saved the `.blend`; do not call another save
+tool. Treat `duplicate_contexts` as delete-after-confirmation candidates, not
+permission to delete them.
 
 If `status: failed`, report whether `rolled_back` is true. Never claim success after a failed audit or failed save.
 

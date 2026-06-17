@@ -72,6 +72,16 @@ Its almost full-width border was caused by unrelated small objects inside the co
 ## Report Template
 
 ```markdown
+## ⚠️ 裁切区域异常建筑
+
+- ⚠️ context 名称
+  - 异常类型：Render Region 过大 / 触边 / 无可渲染几何 / 镜头后方 / 远距离物体 / 实例扩张
+  - 测量：width=0.00, height=0.00, border=(min_x, min_y, max_x, max_y)
+  - 疑似原因：
+  - 处理：仅报告，等待人工确认
+
+没有异常时写：未发现裁切区域异常建筑。
+
 ## 工作流结果
 
 - 新建 context：0
@@ -93,7 +103,7 @@ Its almost full-width border was caused by unrelated small objects inside the co
 - 原 context：已恢复
 - Blend 文件：审计通过后已保存
 
-## 异常情况
+## 其他异常情况
 
 ### 高优先级
 

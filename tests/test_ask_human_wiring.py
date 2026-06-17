@@ -20,14 +20,35 @@ def test_ask_human_registered_in_builtins():
     assert "ASK_HUMAN" in src
 
 
-def test_quick_pick_uses_native_search_popup():
+def test_ask_human_uses_single_full_readable_dialog():
     src = (_ROOT / "agent_core/ask_human_dialog.py").read_text(encoding="utf-8")
 
     assert "event_simulate" not in src
-    assert "EnumProperty" in src
-    assert 'bl_property = "choice"' in src
-    assert "invoke_search_popup(self)" in src
+    assert "EnumProperty" not in src
+    assert "invoke_search_popup(self)" not in src
     assert "invoke_popup(self, width=460)" not in src
-    assert "invoke_props_dialog(self, width=460)" in src
-    assert '"__CUSTOM__", "自由输入..."' in src
-    assert "POPAGENT_OT_ask_human_pick" not in src
+    assert "invoke_props_dialog(self, width=560)" in src
+    assert 'col.label(text="或自由输入（点击 OK 提交）:")' in src
+    assert "POPAGENT_OT_ask_human_custom" not in src
+    assert "POPAGENT_OT_ask_human_confirm_option" not in src
+    assert "POPAGENT_OT_ask_human_pick" in src
+
+
+def test_option_dialog_wraps_full_option_text_and_keeps_click_targets_short():
+    src = (_ROOT / "agent_core/ask_human_dialog.py").read_text(encoding="utf-8")
+
+    assert "def _wrap_dialog_text(" in src
+    assert 'box.label(text=f"选项 {index}:")' in src
+    assert "_wrap_dialog_text(option)" in src
+    assert 'box.operator("popagent.ask_human_pick", text="选择此项")' in src
+    assert "op.value = option" in src
+
+
+def test_options_are_passed_as_json_to_preserve_multiline_text():
+    src = (_ROOT / "agent_core/ask_human_dialog.py").read_text(encoding="utf-8")
+
+    assert "import json" in src
+    assert "options_json: StringProperty" in src
+    assert "def _dialog_options(" in src
+    assert "json.loads(operator.options_json)" in src
+    assert "json.dumps(options or [], ensure_ascii=False)" in src

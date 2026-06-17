@@ -1,9 +1,20 @@
-# POPAgent v1.2.3 — Blender AI Agent
+# POPAgent v1.3.0 — Blender AI Agent
 
 [![Blender](https://img.shields.io/badge/Blender-5.1+-blue.svg)](https://www.blender.org/)
 [![Python](https://img.shields.io/badge/Python-3.11+-green.svg)](https://www.python.org/)
 
 POPAgent 是一个内置于 Blender 3D View 侧栏的 AI Agent 插件。它基于 **Function Calling** 机制，让大语言模型能够直接调用 Blender API 来帮你完成场景操作、查询状态、执行工具管线——全程在 Blender 界面内通过聊天完成，无需切换窗口。
+
+---
+
+## 更新日志
+
+### v1.3.0
+- Answer 面板拆分 Agent 执行过程与最终回答，完成后默认折叠过程摘要。
+- Preferences 改为按 Models / Agent / Skills / Interface / Logs / System 分页显示，并新增“默认权限 / 自动权限”快捷切换。
+- 首页新增“准备渲染”提示词按钮，快速启动 RenderSet Pro 场景 Context 准备流程。
+- 优化 ask_human 选项确认弹窗，完整展示候选回答并保留自由输入。
+- RenderSet 工作流补充输出校验与回滚报告约束，减少错误 Context 进入 Render All。
 
 ---
 
@@ -275,7 +286,7 @@ query_api() → _agent_query()
 
 ```
 POPAgent/
-├── __init__.py                  # 注册入口 (bl_info version 1.2.3)
+├── __init__.py                  # 注册入口 (bl_info version 1.3.0)
 ├── agent_core/                 # Agent 核心
 │   ├── skill_registry.py       # 全局 Skill 注册表 + 权限覆盖
 │   ├── executor.py             # Skill 调度器（安全门控）

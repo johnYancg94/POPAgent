@@ -26,8 +26,10 @@ def test_skill_permission_operators_are_registered():
 
     assert "POPAGENT_OT_set_skill_permission" in operators
     assert "POPAGENT_OT_reset_skill_permissions" in operators
+    assert "POPAGENT_OT_apply_quick_permission_preset" in operators
     assert "POPAGENT_OT_set_skill_permission" in init
     assert "POPAGENT_OT_reset_skill_permissions" in init
+    assert "POPAGENT_OT_apply_quick_permission_preset" in init
 
 
 def run():

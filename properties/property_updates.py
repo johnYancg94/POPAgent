@@ -113,6 +113,8 @@ class PropertyUpdates:
             self.answer = history_item.answer
             self.answer_parts = history_item.answer_parts
             self.answer_object_results = history_item.answer_object_results
+            self.agent_process_events_json = ""
+            self.agent_process_collapsed = True
             self.expanded_answer_code_indices = ""
 
             cc_globals.request_failed = history_item.is_error

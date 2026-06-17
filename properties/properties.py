@@ -106,6 +106,20 @@ class ChatCompanionProperties(PropertyGroup):
         update=PropertyUpdates.update_ui,
     )
 
+    agent_process_events_json: StringProperty(
+        name="Agent Process Events",
+        description="JSON list of live agent process events for the current answer",
+        default="",
+        update=PropertyUpdates.update_ui,
+    )
+
+    agent_process_collapsed: BoolProperty(
+        name="Collapse Agent Process",
+        description="Collapse the agent process section above the final answer",
+        default=True,
+        update=PropertyUpdates.update_ui,
+    )
+
     expanded_answer_code_indices: StringProperty(
         name="Expanded Answer Code Blocks",
         description="Comma-separated answer code block indices expanded in the UI",

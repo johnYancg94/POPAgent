@@ -34,12 +34,13 @@ def test_renderset_skill_is_discovered_from_bundled_root():
     assert record["compatibility"].startswith("Blender 5.1+")
     assert record["metadata"] == {
         "author": "t7597-team",
-        "version": "2.3.0",
+        "version": "2.4.0",
     }
     assert "Never click `Render All`" in record["body"]
     assert "`renderset.prepare`" in record["body"]
     assert "`mcp__blender.execute_blender_code`" in record["body"]
     assert "POPAgent.builtin_skills.renderset_tools" in record["body"]
+    assert "⚠️" in record["body"]
     assert "dev.run_python" in record["body"]
 
 
@@ -61,6 +62,7 @@ def test_renderset_references_are_activatable():
     assert "One combined context per region" in contexts["content"]
     assert "material_override" in settings["content"]
     assert "100 / 0.005" in validation["content"]
+    assert "## ⚠️ 裁切区域异常建筑" in validation["content"]
 
 
 def test_renderset_openai_metadata_has_default_prompt():

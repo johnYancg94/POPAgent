@@ -114,22 +114,46 @@ def _camera_info(camera):
     }
 
 
+def _camera_match_score(camera, label, *, overall=False):
+    name = _semantic_name(camera.name)
+    if overall:
+        exact_names = {"整体场景相机", "整体场景", "完整场景相机", "完整场景", "全景相机", "全景"}
+        if name in exact_names:
+            return 100
+        if "相机" in name and any(token in name for token in ("整体", "完整", "全景")):
+            return 80
+        if any(token in name for token in ("整体场景", "完整场景")):
+            return 70
+        return 0
+
+    if name == label:
+        return 100
+    if name == f"{label}相机":
+        return 95
+    if "相机" in name and label in name:
+        return 80
+    return 0
+
+
+def _best_camera_matches(cameras, label, *, overall=False):
+    scored = [
+        (camera, _camera_match_score(camera, label, overall=overall))
+        for camera in cameras
+    ]
+    scored = [(camera, score) for camera, score in scored if score > 0]
+    if not scored:
+        return []
+    best = max(score for _, score in scored)
+    return [camera for camera, score in scored if score == best]
+
+
 def _resolve_camera(cameras, label, decisions, *, overall=False):
     mapping = decisions.get("region_cameras", {}) if isinstance(decisions, dict) else {}
     requested = decisions.get("overall_camera") if overall else mapping.get(label)
     if requested:
         matches = [camera for camera in cameras if camera.name == requested]
-    elif overall:
-        matches = [
-            camera for camera in cameras
-            if "相机" in _semantic_name(camera.name)
-            and ("整体" in _semantic_name(camera.name) or "全景" in _semantic_name(camera.name))
-        ]
     else:
-        matches = [
-            camera for camera in cameras
-            if label in _semantic_name(camera.name) and "相机" in _semantic_name(camera.name)
-        ]
+        matches = _best_camera_matches(cameras, label, overall=overall)
 
     if len(matches) == 1:
         return _camera_info(matches[0]), []
@@ -276,11 +300,14 @@ def _scan_scene(context, decisions=None):
                     child for child in _children(building_collection)
                     if _semantic_name(child.name) == "前层"
                 ]
+                building_path = f"{region_path}/{building_collection.name}"
+                front_layer_path = None
                 if len(front_candidates) > 1:
-                    blockers.append({
-                        "kind": "ambiguous_front_layer",
+                    warnings.append({
+                        "kind": "skipped_ambiguous_front_layer",
                         "target": f"{region_name}/{building_collection.name}",
                         "candidates": [child.name for child in front_candidates],
+                        "message": "Skipped front-layer Context because multiple 前层 collections matched.",
                     })
                 if len(front_candidates) == 1:
                     direct_render_objects = [
@@ -288,23 +315,22 @@ def _scan_scene(context, decisions=None):
                         if not obj.hide_render
                     ]
                     if direct_render_objects:
-                        blockers.append({
-                            "kind": "front_layer_parent_contains_objects",
+                        warnings.append({
+                            "kind": "skipped_front_layer_parent_contains_objects",
                             "target": f"{region_name}/{building_name}",
                             "objects": direct_render_objects,
                             "message": (
-                                "Move building-body objects into a child collection before "
-                                "creating a collection-only 前层 context. No objects were moved."
+                                "Skipped front-layer Context because the building parent "
+                                "collection contains renderable objects. Move building-body "
+                                "objects into a child collection to enable a safe 前层 context."
                             ),
                         })
-                building_path = f"{region_path}/{building_collection.name}"
+                    else:
+                        front_layer_path = f"{building_path}/{front_candidates[0].name}"
                 buildings.append({
                     "name": building_name,
                     "path": building_path,
-                    "front_layer": (
-                        f"{building_path}/{front_candidates[0].name}"
-                        if len(front_candidates) == 1 else None
-                    ),
+                    "front_layer": front_layer_path,
                 })
 
             terrain_path = None

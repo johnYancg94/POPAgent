@@ -76,6 +76,18 @@ class CHAT_COMPANION_OT_toggle_answer_code(Operator):
         return {"FINISHED"}
 
 
+class CHAT_COMPANION_OT_toggle_agent_process(Operator):
+    bl_idname = "chat_companion.toggle_agent_process"
+    bl_label = "Toggle Process"
+    bl_description = "Expand or collapse the agent process section."
+    bl_options = {"REGISTER", "INTERNAL"}
+
+    def execute(self, context):
+        props = context.scene.chat_companion_properties
+        props.agent_process_collapsed = not props.agent_process_collapsed
+        return {"FINISHED"}
+
+
 class CHAT_COMPANION_OT_select_answer_object(Operator):
     bl_idname = "chat_companion.select_answer_object"
     bl_label = "Select Object"

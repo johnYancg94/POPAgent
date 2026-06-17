@@ -73,6 +73,7 @@ from ..agent_core.resume_context import (
     render_resume_context,
 )
 from ..agent_core.progress import AgentProgressEvent, ProgressSink
+from ..agent_core.process_events import append_process_event_json
 from ..agent_core.agent_policy import (
     choose_max_iters,
     normalized_tool_signature,
@@ -221,6 +222,8 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
             answer="",
             answer_parts="",
             answer_object_results="",
+            agent_process_events_json="",
+            agent_process_collapsed=False,
             expanded_answer_code_indices="",
             waiting_string="",
             waiting_icon="BLANK1",
@@ -296,6 +299,8 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         props.answer = ""
         props.answer_parts = ""
         props.answer_object_results = ""
+        props.agent_process_events_json = ""
+        props.agent_process_collapsed = False
         props.expanded_answer_code_indices = ""
         props.waiting_string = ""
         props.waiting_icon = "BLANK1"
@@ -331,9 +336,15 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
 
     def _make_progress_sink(self, context: Context, props) -> ProgressSink:
         area = getattr(context, "area", None)
+        process_events_json = ""
 
         def write_status(message: str, icon: str) -> None:
+            nonlocal process_events_json
+            process_events_json = append_process_event_json(
+                process_events_json, message, icon
+            )
             ui_write(props, waiting_string=message, waiting_icon=icon)
+            ui_write(props, agent_process_events_json=process_events_json)
             ui_call(self._redraw_area, area)
 
         def write_text(text: str) -> None:
@@ -1483,6 +1494,7 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
         props.answer = visible_text
         props.answer_parts = json.dumps(answer_parts)
         props.answer_object_results = object_results
+        props.agent_process_collapsed = True
 
         tool_calls_json = json.dumps(
             trace or getattr(self, "_active_trace", None) or [],

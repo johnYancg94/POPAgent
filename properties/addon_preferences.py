@@ -110,7 +110,28 @@ class ChatCompanionPreferences(AddonPreferences):
         ),
     )
 
+    _preferences_tabs = (
+        ("MODELS", "Models", "API keys, provider endpoints, and model context"),
+        ("AGENT", "Agent", "Agent behavior, documentation, and web search"),
+        ("SKILLS", "Skills", "Agent Skills and callable tools"),
+        ("INTERFACE", "Interface", "Answer and panel display settings"),
+        ("LOGS", "Logs", "Agent usage logging"),
+        ("SYSTEM", "System", "Dependencies, connection, and advanced settings"),
+    )
+
+    _quick_permission_presets = (
+        ("DEFAULT", "默认权限", "Use each callable tool's default permission preset"),
+        ("AUTO", "自动权限", "Allow callable tools to run automatically"),
+    )
+
     # endregion
+
+    preferences_tab: props.EnumProperty(
+        name="Preferences Tab",
+        description="Choose which POPAgent settings module to display",
+        items=_preferences_tabs,
+        default="MODELS",
+    )
 
     # region LLMs
     open_ai_api_key: props.StringProperty(
@@ -247,6 +268,13 @@ class ChatCompanionPreferences(AddonPreferences):
         name="Skill Permission Overrides",
         description="Persistent JSON overrides for per-skill confirmation behavior.",
         default="{}",
+    )
+
+    quick_permission_preset: props.EnumProperty(
+        name="Quick Permissions",
+        description="Fast global permission preset for Agent callable tools",
+        items=_quick_permission_presets,
+        default="AUTO",
     )
     # endregion
 
@@ -395,13 +423,10 @@ class ChatCompanionPreferences(AddonPreferences):
     # region DRAW
     def draw(self, context: Context):
         pcoll = cc_globals.preview_collections["main"]
-        props: ChatCompanionProperties = context.scene.chat_companion_properties
-
         layout: UILayout = self.layout
         layout.use_property_split = True
         layout.use_property_decorate = False
 
-        # ! header
         header_box: UILayout = layout.box()
         header: UILayout = header_box.row(align=True)
         header.alignment = "CENTER"
@@ -415,281 +440,175 @@ class ChatCompanionPreferences(AddonPreferences):
         version.label(text="Blender 5.1 Agent", icon="KEYTYPE_JITTER_VEC")
         header_box.separator(factor=0.1)
 
-        # ! api keys
-        api_keys_container: UILayout = layout.column(align=True)
-        api_keys_container.label(text="API keys", icon="KEYINGSET")
-        api_keys_text_fields: UILayout = layout.column(align=False)
+        tabs = layout.row(align=True)
+        tabs.use_property_split = False
+        tabs.prop(self, "preferences_tab", expand=True)
+        layout.separator()
 
-        # ! openai
-        openai_split: UILayout = api_keys_text_fields.split(align=True, factor=2 / 5)
-        openai_left: UILayout = openai_split.row(align=True)
-        openai_left.alignment = "RIGHT"
-        openai_left.label(
-            text="OpenAI API key", icon_value=pcoll["openai_icon"].icon_id
-        )
-        openai_right: UILayout = openai_split.column(align=True)
-        # api key
-        openai_right.prop(self, "open_ai_api_key", text="")
-        openai_right.prop(self, "open_ai_base_url", text="Base URL")
-        # buttons below
-        openai_buttons: UILayout = openai_right.row(align=True)
-        openai_key_website: CHAT_COMPANION_OT_website = openai_buttons.operator(
-            operator=CHAT_COMPANION_OT_website.bl_idname, text="Get key", icon="KEY_HLT"
-        )
-        openai_key_website.url = "https://platform.openai.com/account/api-keys"
-        openai_docs: CHAT_COMPANION_OT_website = openai_buttons.operator(
-            operator=CHAT_COMPANION_OT_website.bl_idname,
-            text="API Docs",
-            icon="QUESTION",
-        )
-        openai_docs.url = "https://developers.openai.com/api/docs"
+        drawers = {
+            "MODELS": self._draw_models_tab,
+            "AGENT": self._draw_agent_tab,
+            "SKILLS": self._draw_skills_tab,
+            "INTERFACE": self._draw_interface_tab,
+            "LOGS": self._draw_logs_tab,
+            "SYSTEM": self._draw_system_tab,
+        }
+        drawers[self.preferences_tab](layout, context)
 
-        api_keys_text_fields.separator()
+    def _draw_models_tab(self, layout: UILayout, _context: Context):
+        pcoll = cc_globals.preview_collections["main"]
+        self._draw_quick_permissions(layout)
 
-        # ! mimo
-        mimo_split: UILayout = api_keys_text_fields.split(align=True, factor=2 / 5)
-        mimo_left: UILayout = mimo_split.row(align=True)
-        mimo_left.alignment = "RIGHT"
-        mimo_left.label(text="MiMo API key", icon_value=pcoll["mimo_icon"].icon_id)
-        mimo_right: UILayout = mimo_split.column(align=True)
-        mimo_right.prop(self, "mimo_api_key", text="")
-        mimo_right.prop(self, "mimo_base_url", text="Base URL")
-        mimo_right.prop(self, "mimo_model", text="Model")
-        mimo_buttons: UILayout = mimo_right.row(align=True)
-        mimo_key_website: CHAT_COMPANION_OT_website = mimo_buttons.operator(
-            operator=CHAT_COMPANION_OT_website.bl_idname, text="Get key", icon="KEY_HLT"
+        settings = layout.column(align=True)
+        settings.label(text="API Keys and Providers", icon="KEYINGSET")
+
+        providers = (
+            (
+                "OpenAI",
+                "openai_icon",
+                "open_ai_api_key",
+                "open_ai_base_url",
+                None,
+                "https://platform.openai.com/account/api-keys",
+                "https://developers.openai.com/api/docs",
+            ),
+            (
+                "MiMo",
+                "mimo_icon",
+                "mimo_api_key",
+                "mimo_base_url",
+                "mimo_model",
+                "https://platform.xiaomimimo.com/",
+                "https://platform.xiaomimimo.com/docs/en-US/api/chat/openai-api",
+            ),
+            (
+                "DeepSeek",
+                "deepseek_icon",
+                "deepseek_api_key",
+                "deepseek_base_url",
+                None,
+                "https://platform.deepseek.com/api_keys",
+                "https://api-docs.deepseek.com/",
+            ),
+            (
+                "minimax",
+                "anthropic_icon",
+                "minimax_api_key",
+                "minimax_base_url",
+                "minimax_model",
+                "https://platform.minimaxi.com/user-center/payment/token-plan",
+                None,
+            ),
         )
-        mimo_key_website.url = "https://platform.xiaomimimo.com/"
-        mimo_docs: CHAT_COMPANION_OT_website = mimo_buttons.operator(
-            operator=CHAT_COMPANION_OT_website.bl_idname,
-            text="API Docs",
-            icon="QUESTION",
-        )
-        mimo_docs.url = "https://platform.xiaomimimo.com/docs/en-US/api/chat/openai-api"
+        for name, icon, api_key, base_url, model, key_url, docs_url in providers:
+            split = settings.split(align=True, factor=2 / 5)
+            label = split.row(align=True)
+            label.alignment = "RIGHT"
+            label.label(text=f"{name} API key", icon_value=pcoll[icon].icon_id)
+            fields = split.column(align=True)
+            fields.prop(self, api_key, text="")
+            fields.prop(self, base_url, text="Base URL")
+            if model:
+                fields.prop(self, model, text="Model")
+            buttons = fields.row(align=True)
+            key_button: CHAT_COMPANION_OT_website = buttons.operator(
+                operator=CHAT_COMPANION_OT_website.bl_idname,
+                text="Get key",
+                icon="KEY_HLT",
+            )
+            key_button.url = key_url
+            if docs_url:
+                docs_button: CHAT_COMPANION_OT_website = buttons.operator(
+                    operator=CHAT_COMPANION_OT_website.bl_idname,
+                    text="API Docs",
+                    icon="QUESTION",
+                )
+                docs_button.url = docs_url
+            settings.separator()
 
-        api_keys_text_fields.separator()
-
-        # ! deepseek
-        deepseek_split: UILayout = api_keys_text_fields.split(align=True, factor=2 / 5)
-        deepseek_left: UILayout = deepseek_split.row(align=True)
-        deepseek_left.alignment = "RIGHT"
-        deepseek_left.label(text="DeepSeek API key", icon_value=pcoll["deepseek_icon"].icon_id)
-        deepseek_right: UILayout = deepseek_split.column(align=True)
-        deepseek_right.prop(self, "deepseek_api_key", text="")
-        deepseek_right.prop(self, "deepseek_base_url", text="Base URL")
-        deepseek_buttons: UILayout = deepseek_right.row(align=True)
-        deepseek_key_website: CHAT_COMPANION_OT_website = deepseek_buttons.operator(
-            operator=CHAT_COMPANION_OT_website.bl_idname, text="Get key", icon="KEY_HLT"
-        )
-        deepseek_key_website.url = "https://platform.deepseek.com/api_keys"
-        deepseek_docs: CHAT_COMPANION_OT_website = deepseek_buttons.operator(
-            operator=CHAT_COMPANION_OT_website.bl_idname,
-            text="API Docs",
-            icon="QUESTION",
-        )
-        deepseek_docs.url = "https://api-docs.deepseek.com/"
-
-        api_keys_text_fields.separator()
-
-        # ! minimax (Anthropic-Messages-API compatible)
-        minimax_split: UILayout = api_keys_text_fields.split(align=True, factor=2 / 5)
-        minimax_left: UILayout = minimax_split.row(align=True)
-        minimax_left.alignment = "RIGHT"
-        minimax_left.label(text="minimax API key", icon_value=pcoll["anthropic_icon"].icon_id)
-        minimax_right: UILayout = minimax_split.column(align=True)
-        minimax_right.prop(self, "minimax_api_key", text="")
-        minimax_right.prop(self, "minimax_base_url", text="Base URL")
-        minimax_right.prop(self, "minimax_model", text="Model")
-        minimax_buttons: UILayout = minimax_right.row(align=True)
-        minimax_key_website: CHAT_COMPANION_OT_website = minimax_buttons.operator(
-            operator=CHAT_COMPANION_OT_website.bl_idname, text="Get key", icon="KEY_HLT"
-        )
-        minimax_key_website.url = "https://platform.minimaxi.com/user-center/payment/token-plan"
-
-        # ! context (global 1M toggle, sits right under the API keys)
         context_settings = layout.column(align=True)
         context_settings.label(text="Context", icon="ALIGN_JUSTIFY")
-        ctx_1m_split: UILayout = context_settings.split(align=True, factor=2 / 5)
-        ctx_1m_left: UILayout = ctx_1m_split.row(align=True)
-        ctx_1m_left.alignment = "RIGHT"
-        ctx_1m_left.label(text="Enable 1M Context")
-        ctx_1m_right: UILayout = ctx_1m_split.column(align=True)
-        ctx_1m_right.prop(self, "agent_context_1m_enabled", text="")
+        context_settings.prop(
+            self, "agent_context_1m_enabled", text="Enable 1M Context"
+        )
 
-        layout.box()
+    def _draw_quick_permissions(self, layout: UILayout):
+        quick = layout.column(align=True)
+        quick.label(text="Agent Permissions", icon="LOCKED")
+        row = quick.row(align=True)
+        row.use_property_split = False
+        for preset, label, _description in self._quick_permission_presets:
+            button = row.operator(
+                "popagent.apply_quick_permission_preset",
+                text=label,
+                depress=self.quick_permission_preset == preset,
+            )
+            button.preset = preset
+        quick.separator()
 
-        # ! display
-        display_settings = layout.column(align=True)
-        display_settings.label(text="Display", icon="RESTRICT_VIEW_ON")
-        offset_container = display_settings.row(align=True)
-        offset_container.prop(self, "text_width_adjust", text="Adjust Text Width")
-        answer_mode_container = display_settings.row(align=True)
-        answer_mode_container.prop(self, "answer_display_mode", text="Answer")
-        code_preview_container = display_settings.row(align=True)
-        code_preview_container.prop(self, "answer_code_preview_lines", text="Code Preview")
+    def _draw_agent_tab(self, layout: UILayout, _context: Context):
+        settings = layout.column(align=True)
+        settings.label(text="Agent Mode", icon="ARMATURE_DATA")
+        settings.prop(self, "agent_mode_enabled", text="Enable Agent")
 
-        layout.box()
+        agent_body = settings.column(align=True)
+        agent_body.enabled = self.agent_mode_enabled
+        agent_body.prop(self, "agent_max_iters", text="Max Iterations")
+        agent_body.label(text="1-100 (hard cap 200)")
+        agent_body.prop(self, "max_history_context", text="Max History Context")
 
-        # ! agent mode
-        agent_settings = layout.column(align=True)
-        agent_settings.label(text="Agent Mode", icon="ARMATURE_DATA")
-        agent_split: UILayout = agent_settings.split(align=True, factor=2 / 5)
-        agent_left: UILayout = agent_split.row(align=True)
-        agent_left.alignment = "RIGHT"
-        agent_left.label(text="Enable Agent")
-        agent_right: UILayout = agent_split.column(align=True)
-        agent_right.prop(self, "agent_mode_enabled", text="")
-        agent_iter_split: UILayout = agent_settings.split(align=True, factor=2 / 5)
-        agent_iter_left: UILayout = agent_iter_split.row(align=True)
-        agent_iter_left.alignment = "RIGHT"
-        agent_iter_left.label(text="Max Iterations")
-        agent_iter_right: UILayout = agent_iter_split.column(align=True)
-        agent_iter_right.enabled = self.agent_mode_enabled
-        agent_iter_right.prop(self, "agent_max_iters", text="")
-        agent_iter_right.label(text="1–100 (hard cap 200)")
-        agent_history_split: UILayout = agent_settings.split(align=True, factor=2 / 5)
-        agent_history_left: UILayout = agent_history_split.row(align=True)
-        agent_history_left.alignment = "RIGHT"
-        agent_history_left.label(text="Max History Context")
-        agent_history_right: UILayout = agent_history_split.column(align=True)
-        agent_history_right.prop(self, "max_history_context", text="")
-        api_docs_split: UILayout = agent_settings.split(align=True, factor=2 / 5)
-        api_docs_left: UILayout = api_docs_split.row(align=True)
-        api_docs_left.alignment = "RIGHT"
-        api_docs_left.label(text="Blender API Docs")
-        api_docs_right: UILayout = api_docs_split.column(align=True)
-        api_docs_right.prop(self, "blender_api_docs_url", text="URL")
-        api_docs_right.prop(self, "blender_api_docs_path", text="Local")
-        api_docs_right.prop(self, "blender_api_docs_prefer_local", text="Prefer Local")
-        web_search_split: UILayout = agent_settings.split(align=True, factor=2 / 5)
-        web_search_left: UILayout = web_search_split.row(align=True)
-        web_search_left.alignment = "RIGHT"
-        web_search_left.label(text="Web Search")
-        web_search_right: UILayout = web_search_split.column(align=True)
-        web_search_right.prop(self, "web_search_enabled", text="Enable")
-        web_search_body: UILayout = web_search_right.column(align=True)
+        settings.separator()
+        settings.label(text="Blender API Documentation", icon="HELP")
+        settings.prop(self, "blender_api_docs_url", text="URL")
+        settings.prop(self, "blender_api_docs_path", text="Local")
+        settings.prop(self, "blender_api_docs_prefer_local", text="Prefer Local")
+
+        settings.separator()
+        settings.label(text="Web Search", icon="URL")
+        settings.prop(self, "web_search_enabled", text="Enable")
+        web_search_body = settings.column(align=True)
         web_search_body.enabled = self.web_search_enabled
         web_search_body.prop(self, "tavily_api_key", text="Tavily API Key")
         web_search_body.prop(self, "tavily_endpoint", text="Endpoint")
 
-        layout.box()
+    def _draw_skills_tab(self, layout: UILayout, _context: Context):
+        settings = layout.column(align=True)
+        settings.label(text="Agent Skills and Callable Tools", icon="TOOL_SETTINGS")
+        draw_skills_ui(settings, prefs=self, developer_mode=self.developer_mode)
 
-        # ! usage log
-        usage_settings = layout.column(align=True)
-        usage_settings.label(text="Usage Log", icon="FILE_TEXT")
-        usage_enable_split: UILayout = usage_settings.split(align=True, factor=2 / 5)
-        usage_enable_left: UILayout = usage_enable_split.row(align=True)
-        usage_enable_left.alignment = "RIGHT"
-        usage_enable_left.label(text="Log Agent Usage")
-        usage_enable_right: UILayout = usage_enable_split.column(align=True)
-        usage_enable_right.prop(self, "trace_log_enabled", text="")
-        usage_body: UILayout = usage_settings.column(align=True)
-        usage_body.enabled = self.trace_log_enabled
-        usage_dir_split: UILayout = usage_body.split(align=True, factor=2 / 5)
-        usage_dir_left: UILayout = usage_dir_split.row(align=True)
-        usage_dir_left.alignment = "RIGHT"
-        usage_dir_left.label(text="Log Folder")
-        usage_dir_right: UILayout = usage_dir_split.column(align=True)
-        usage_dir_right.prop(self, "trace_log_dir", text="")
-        usage_dir_right.prop(self, "trace_log_full", text="Log Full Request Text")
+    def _draw_interface_tab(self, layout: UILayout, _context: Context):
+        settings = layout.column(align=True)
+        settings.label(text="Display", icon="RESTRICT_VIEW_ON")
+        settings.prop(self, "text_width_adjust", text="Adjust Text Width")
+        settings.prop(self, "answer_display_mode", text="Answer")
+        settings.prop(self, "answer_code_preview_lines", text="Code Preview")
 
-        layout.box()
+    def _draw_logs_tab(self, layout: UILayout, _context: Context):
+        settings = layout.column(align=True)
+        settings.label(text="Usage Log", icon="FILE_TEXT")
+        settings.prop(self, "trace_log_enabled", text="Log Agent Usage")
+        log_body = settings.column(align=True)
+        log_body.enabled = self.trace_log_enabled
+        log_body.prop(self, "trace_log_dir", text="Log Folder")
+        log_body.prop(self, "trace_log_full", text="Log Full Request Text")
 
-        # ! skills
-        skills_settings = layout.column(align=True)
-        skills_settings.label(text="Agent Skills and Callable Tools", icon="TOOL_SETTINGS")
-        draw_skills_ui(skills_settings, prefs=self, developer_mode=self.developer_mode)
+    def _draw_system_tab(self, layout: UILayout, context: Context):
+        props: ChatCompanionProperties = context.scene.chat_companion_properties
+        settings = layout.column(align=True)
+        settings.label(text="System", icon="PLUGIN")
+        settings.prop(self, "developer_mode", text="Developer Mode")
 
-        layout.box()
+        dependencies_box = settings.box()
+        dependencies_box.label(text="Dependencies", icon="PACKAGE")
+        self._draw_dependencies(dependencies_box)
 
-        # ! system
-        system_settings = layout.column(align=True)
-        system_settings.label(text="System", icon="PLUGIN")
-        system_settings.prop(self, "developer_mode", text="Developer Mode")
-
-        # ! dependencies
-        streaming_layout = system_settings.split(factor=2 / 5, align=True)
-        streaming_layout.row()  # empty left side
-        streaming_container = streaming_layout.column(align=True)
-
-        # check dependencies
-        if not self.dependencies_checked:
-            deps_button = streaming_container.operator(
-                operator=CHAT_COMPANION_OT_install_deps.bl_idname,
-                text="Check Dependencies",
-                icon="QUESTION",
-            )
-            deps_button.install_deps = False
-
-        # deps installed, reinstall button
-        elif dependencies.dependencies_installed:
-            streaming_container.label(text="Dependencies installed.")
-            deps_button = streaming_container.operator(
-                operator=CHAT_COMPANION_OT_install_deps.bl_idname,
-                text="Reinstall Dependencies",
-                icon="KEYTYPE_JITTER_VEC",
-            )
-            deps_button.install_deps = True
-            deps_button.force_install = True
-
-        # deps not installed, install button
-        else:
-            not_installed_text = streaming_container.row(align=True)
-            not_installed_text.alert = True
-            if not dependencies.pip_installed:
-                not_installed_text.label(text="Python installer pip not installed.")
-            if not dependencies.httpx_installed:
-                not_installed_text.label(text="Python module httpx not installed.")
-            if not dependencies.yaml_installed:
-                not_installed_text.label(text="Python module PyYAML not installed.")
-            streaming_container.label(
-                text="Streaming not available, using All at Once."
-            )
-            deps_button = streaming_container.operator(
-                operator=CHAT_COMPANION_OT_install_deps.bl_idname,
-                text="Install Dependencies",
-                icon="KEYTYPE_EXTREME_VEC",
-            )
-            deps_button.install_deps = True
-            streaming_container.separator()
-            streaming_container.label(text="Or install it manually")
-            if not dependencies.pip_installed:
-                pip_link = streaming_container.operator(
-                    operator=CHAT_COMPANION_OT_website.bl_idname,
-                    text="How to install pip",
-                    icon="URL",
-                )
-                pip_link.url = "https://pip.pypa.io/en/stable/installation/"
-            if not dependencies.httpx_installed:
-                httpx_link = streaming_container.operator(
-                    operator=CHAT_COMPANION_OT_website.bl_idname,
-                    text="How to install httpx",
-                    icon="URL",
-                )
-                httpx_link.url = "https://www.python-httpx.org/"
-            if not dependencies.yaml_installed:
-                yaml_link = streaming_container.operator(
-                    operator=CHAT_COMPANION_OT_website.bl_idname,
-                    text="PyYAML documentation",
-                    icon="URL",
-                )
-                yaml_link.url = "https://pyyaml.org/wiki/PyYAMLDocumentation"
-
-        system_settings.separator()
-
-        # ! connection
-        stream_no_stream_split: UILayout = system_settings.split(
-            align=True, factor=2 / 5
-        )
-
-        stream_no_stream_left: UILayout = stream_no_stream_split.row(align=True)
-        stream_no_stream_left.alignment = "RIGHT"
-        stream_no_stream_left.label(text="Answer")
-
-        stream_no_stream_right: UILayout = stream_no_stream_split.row(align=True)
-        stream_no_stream_right.use_property_split = False
-        stream_no_stream_right.prop(self, "use_streaming", toggle=True, expand=True)
-        stream_no_stream_right.prop(
+        connection = settings.column(align=True)
+        connection.enabled = not props.is_streaming
+        connection.label(text="Connection", icon="LINKED")
+        stream_row = connection.row(align=True)
+        stream_row.use_property_split = False
+        stream_row.prop(self, "use_streaming", toggle=True, expand=True)
+        stream_row.prop(
             self,
             "use_streaming",
             toggle=True,
@@ -697,23 +616,10 @@ class ChatCompanionPreferences(AddonPreferences):
             text="All At Once",
             expand=True,
         )
+        connection.prop(self, "timeout", text="Request Timeout")
 
-        system_settings.separator()
-        system_settings.enabled = True
-        if props.is_streaming:
-            system_settings.enabled = False
-
-        # ! timeout
-        timeout_container = system_settings.column(align=False)
-        timeout_container.prop(
-            self,
-            "timeout",
-            text="Request Timeout",
-        )
-
-        layout.box()
-
-        disclaimer: UILayout = layout.column(align=True)
+        settings.separator()
+        disclaimer: UILayout = settings.column(align=True)
         disclaimer.label(text="Disclaimer", icon="INFO")
         disclaimer_text: UILayout = disclaimer.column(align=True)
         disclaimer_text.alignment = "RIGHT"
@@ -730,5 +636,70 @@ class ChatCompanionPreferences(AddonPreferences):
             text="assumes no responsibility or liability for any misuse or damages"
         )
         disclaimer_text.label(text="resulting from its use.")
+
+    def _draw_dependencies(self, layout: UILayout):
+        if not self.dependencies_checked:
+            deps_button = layout.operator(
+                operator=CHAT_COMPANION_OT_install_deps.bl_idname,
+                text="Check Dependencies",
+                icon="QUESTION",
+            )
+            deps_button.install_deps = False
+            return
+
+        if dependencies.dependencies_installed:
+            layout.label(text="Dependencies installed.")
+            deps_button = layout.operator(
+                operator=CHAT_COMPANION_OT_install_deps.bl_idname,
+                text="Reinstall Dependencies",
+                icon="KEYTYPE_JITTER_VEC",
+            )
+            deps_button.install_deps = True
+            deps_button.force_install = True
+            return
+
+        missing = layout.column(align=True)
+        missing.alert = True
+        if not dependencies.pip_installed:
+            missing.label(text="Python installer pip not installed.")
+        if not dependencies.httpx_installed:
+            missing.label(text="Python module httpx not installed.")
+        if not dependencies.yaml_installed:
+            missing.label(text="Python module PyYAML not installed.")
+        layout.label(text="Streaming not available, using All at Once.")
+        deps_button = layout.operator(
+            operator=CHAT_COMPANION_OT_install_deps.bl_idname,
+            text="Install Dependencies",
+            icon="KEYTYPE_EXTREME_VEC",
+        )
+        deps_button.install_deps = True
+        layout.separator()
+        layout.label(text="Or install it manually")
+        dependency_links = (
+            (
+                dependencies.pip_installed,
+                "How to install pip",
+                "https://pip.pypa.io/en/stable/installation/",
+            ),
+            (
+                dependencies.httpx_installed,
+                "How to install httpx",
+                "https://www.python-httpx.org/",
+            ),
+            (
+                dependencies.yaml_installed,
+                "PyYAML documentation",
+                "https://pyyaml.org/wiki/PyYAMLDocumentation",
+            ),
+        )
+        for installed, text, url in dependency_links:
+            if installed:
+                continue
+            link: CHAT_COMPANION_OT_website = layout.operator(
+                operator=CHAT_COMPANION_OT_website.bl_idname,
+                text=text,
+                icon="URL",
+            )
+            link.url = url
 
     # endregion

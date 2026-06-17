@@ -78,9 +78,9 @@ def _build_scene():
     scatter = _collection("植被散布", particle_root)
     misc_assets = _collection("临时资产", misc_root)
 
-    _camera("整体场景相机", scene_root, 100)
-    _camera("区域一相机", scene_root, 50)
-    _camera("区域二相机", scene_root, 75)
+    _camera("完整场景", scene_root, 100)
+    _camera("区域一", scene_root, 50)
+    _camera("区域二", scene_root, 75)
     _cube("码头主体", dock_body)
     _cube("码头前层", front, 2)
     _cube("仓库主体", warehouse)

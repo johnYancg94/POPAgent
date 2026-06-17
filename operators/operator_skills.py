@@ -27,6 +27,27 @@ def _read_override_json(prefs) -> dict:
     return data if isinstance(data, dict) else {}
 
 
+def apply_quick_permission_preset(prefs, preset: str) -> None:
+    if preset == "DEFAULT":
+        prefs.skill_permission_overrides_json = "{}"
+        skill_registry.clear_permission_overrides()
+        return
+
+    if preset == "AUTO":
+        data = {}
+        for skill in skill_registry.all_skills():
+            owner = skill.get("owner", "unknown")
+            name = skill.get("name", "")
+            if name:
+                data[skill_registry.permission_key(owner, name)] = "never"
+                skill_registry.set_permission_override(owner, name, "never")
+        prefs.skill_permission_overrides_json = json.dumps(
+            data,
+            ensure_ascii=False,
+            sort_keys=True,
+        )
+
+
 class POPAGENT_OT_toggle_skill(Operator):
     """Enable or disable a registered skill (session-scoped)."""
 
@@ -87,6 +108,29 @@ class POPAGENT_OT_set_skill_permission(Operator):
         return {"FINISHED"}
 
 
+class POPAGENT_OT_apply_quick_permission_preset(Operator):
+    """Apply the global quick permission preset from addon preferences."""
+
+    bl_idname = "popagent.apply_quick_permission_preset"
+    bl_label = "Apply Quick Permission Preset"
+    bl_options = {"INTERNAL"}
+
+    preset: StringProperty(default="AUTO")
+
+    def execute(self, context):
+        if self.preset not in {"DEFAULT", "AUTO"}:
+            return {"CANCELLED"}
+
+        prefs = _prefs_from_context(context)
+        prefs.quick_permission_preset = self.preset
+        apply_quick_permission_preset(prefs, self.preset)
+        if self.preset == "DEFAULT":
+            self.report({"INFO"}, "Skill permissions restored to presets.")
+        else:
+            self.report({"INFO"}, "Skill permissions set to auto.")
+        return {"FINISHED"}
+
+
 class POPAGENT_OT_reset_skill_permissions(Operator):
     """Restore all skills to their preset metadata confirmation levels."""
 
@@ -96,7 +140,7 @@ class POPAGENT_OT_reset_skill_permissions(Operator):
 
     def execute(self, context):
         prefs = _prefs_from_context(context)
-        prefs.skill_permission_overrides_json = "{}"
-        skill_registry.clear_permission_overrides()
+        prefs.quick_permission_preset = "DEFAULT"
+        apply_quick_permission_preset(prefs, "DEFAULT")
         self.report({"INFO"}, "Skill permissions restored to presets.")
         return {"FINISHED"}

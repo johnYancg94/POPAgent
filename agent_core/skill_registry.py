@@ -96,6 +96,9 @@ def get_permission_level(skill: dict, prefs=None) -> str:
     name = skill.get("name", "")
     key = (owner, name)
 
+    if getattr(prefs, "quick_permission_preset", "DEFAULT") == "AUTO":
+        return "never"
+
     pref_override = _permission_overrides_from_prefs(prefs).get(key)
     if pref_override is not None:
         return pref_override

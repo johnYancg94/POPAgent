@@ -22,6 +22,7 @@ from ..operators.operator_website import CHAT_COMPANION_OT_website
 from ..operators.operator_copy_error import CHAT_COMPANION_OT_copy_error
 from ..operators.operator_answer_view import CHAT_COMPANION_OT_open_answer_text
 from ..operators.operator_answer_view import CHAT_COMPANION_OT_toggle_answer_code
+from ..operators.operator_answer_view import CHAT_COMPANION_OT_toggle_agent_process
 from ..operators.operator_answer_view import CHAT_COMPANION_OT_select_answer_object
 from ..operators.operator_ask import CHAT_COMPANION_OT_ask
 from ..operators.operator_feedback import CHAT_COMPANION_OT_rate_answer
@@ -33,6 +34,11 @@ from .panel import POLYGONINGENIEUR_panel
 from ..properties.properties import ChatCompanionProperties
 from ..properties.addon_preferences import ChatCompanionPreferences
 from ..agent_core.execution_trace import parse_trace
+from ..agent_core.process_events import (
+    events_from_trace,
+    parse_process_events,
+    process_summary,
+)
 from .. import __package__ as base_package
 
 
@@ -79,6 +85,8 @@ class CHAT_COMPANION_PT_output(POLYGONINGENIEUR_panel, Panel):
         else:
             if len(props.answer_parts) > 0:
                 self.draw_answer(context, layout)
+            elif props.agent_process_events_json:
+                self.draw_agent_process(context, layout, props)
             else:
                 layout.label(text="")
         context.area.tag_redraw()
@@ -106,6 +114,7 @@ class CHAT_COMPANION_PT_output(POLYGONINGENIEUR_panel, Panel):
         narrow_width = compact_width or context.region.width < 360
 
         self.draw_answer_actions(context, layout, chat_properties, addon_preferences)
+        self.draw_agent_process(context, layout, chat_properties)
 
         if display_mode == "RAW":
             self.draw_raw_answer(context, layout, chat_properties.answer)
@@ -468,6 +477,59 @@ class CHAT_COMPANION_PT_output(POLYGONINGENIEUR_panel, Panel):
             copy_all_props.content = chat_properties.answer
 
         self.draw_feedback(context, layout, chat_properties)
+
+    def draw_agent_process(
+        self,
+        context: Context,
+        layout: UILayout,
+        chat_properties: ChatCompanionProperties,
+    ):
+        events, trace = self.current_process_events(context, chat_properties)
+        if not events:
+            return
+
+        collapsed = (
+            chat_properties.agent_process_collapsed
+            and not chat_properties.waiting_for_answer
+            and not chat_properties.is_streaming
+        )
+        process_box = layout.box()
+        header = process_box.row(align=True)
+        header.operator(
+            operator=CHAT_COMPANION_OT_toggle_agent_process.bl_idname,
+            text="",
+            icon="TRIA_RIGHT" if collapsed else "TRIA_DOWN",
+        )
+        header.label(text=process_summary(events, trace), icon="SORTTIME")
+
+        if collapsed:
+            return
+
+        for event in events:
+            row = process_box.row(align=True)
+            row.scale_y = 0.72
+            row.label(
+                text=str(event.get("message") or ""),
+                icon=str(event.get("icon") or "INFO"),
+            )
+        layout.separator(factor=0.2)
+
+    def current_process_events(
+        self,
+        context: Context,
+        chat_properties: ChatCompanionProperties,
+    ) -> tuple[list[dict], dict | None]:
+        if chat_properties.waiting_for_answer or chat_properties.is_streaming:
+            return parse_process_events(chat_properties.agent_process_events_json), None
+
+        history = context.scene.chat_companion_history
+        if len(history) <= 0:
+            return [], None
+        selected_item = history.get(str(chat_properties.selected_history_item))
+        if not selected_item or not selected_item.tool_calls_json:
+            return [], None
+        trace = parse_trace(selected_item.tool_calls_json)
+        return events_from_trace(trace), trace
 
     def draw_feedback(
         self,

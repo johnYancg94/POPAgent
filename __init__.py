@@ -12,7 +12,7 @@ from .agent_core import skill_registry as _skill_registry
 from .agent_core.confirm_dialog import POPAGENT_OT_confirm_skill, clear_session_trust
 from .agent_core.ask_human_dialog import (
     POPAGENT_OT_ask_human,
-    POPAGENT_OT_ask_human_custom,
+    POPAGENT_OT_ask_human_pick,
 )
 from .agent_core.reverse_pull import pull_already_loaded_agent_skills
 from . import builtin_skills as _builtin_skills
@@ -48,6 +48,7 @@ from .operators.operator_copy import CHAT_COMPANION_OT_copy
 from .operators.operator_copy_error import CHAT_COMPANION_OT_copy_error
 from .operators.operator_answer_view import CHAT_COMPANION_OT_open_answer_text
 from .operators.operator_answer_view import CHAT_COMPANION_OT_toggle_answer_code
+from .operators.operator_answer_view import CHAT_COMPANION_OT_toggle_agent_process
 from .operators.operator_answer_view import CHAT_COMPANION_OT_select_answer_object
 from .operators.operator_open_prefs import CHAT_COMPANION_OT_open_prefs
 from .operators.operator_website import CHAT_COMPANION_OT_website
@@ -61,6 +62,7 @@ from .operators.operator_history import CHAT_COMPANION_OT_move_history
 from .operators.operator_usage import CHAT_COMPANION_OT_clear_usage
 from .operators.operator_usage import CHAT_COMPANION_OT_export_usage_csv
 from .operators.operator_usage import CHAT_COMPANION_OT_mine_logs
+from .operators.operator_prompt_presets import CHAT_COMPANION_OT_set_render_prep_prompt
 from .operators.operator_feedback import CHAT_COMPANION_OT_rate_answer
 from .operators.operator_install_deps import CHAT_COMPANION_OT_install_deps
 from .operators.operator_change_llm import CHAT_COMPANION_OT_select_mimo
@@ -71,6 +73,7 @@ from .operators.operator_skills import (
     POPAGENT_OT_clear_session_trust,
     POPAGENT_OT_set_skill_permission,
     POPAGENT_OT_reset_skill_permissions,
+    POPAGENT_OT_apply_quick_permission_preset,
 )
 from .menus.context_interface_help import WM_MT_button_context
 from .menus.context_interface_help import chat_companion_button_menu
@@ -100,7 +103,7 @@ bl_info = {
     "author": "JhonYan",
     "description": "A Blender Agent based on OpenAI and DeepSeek.",
     "blender": (5, 1, 0),
-    "version": (1, 2, 3),
+    "version": (1, 3, 0),
     "location": "View3D",
     "warning": "",
     "doc_url": "",
@@ -137,6 +140,7 @@ classes = (
     CHAT_COMPANION_OT_copy_error,
     CHAT_COMPANION_OT_open_answer_text,
     CHAT_COMPANION_OT_toggle_answer_code,
+    CHAT_COMPANION_OT_toggle_agent_process,
     CHAT_COMPANION_OT_select_answer_object,
     CHAT_COMPANION_OT_open_prefs,
     CHAT_COMPANION_OT_website,
@@ -150,6 +154,7 @@ classes = (
     CHAT_COMPANION_OT_clear_usage,
     CHAT_COMPANION_OT_export_usage_csv,
     CHAT_COMPANION_OT_mine_logs,
+    CHAT_COMPANION_OT_set_render_prep_prompt,
     CHAT_COMPANION_OT_rate_answer,
     CHAT_COMPANION_OT_install_deps,
     CHAT_COMPANION_OT_select_mimo,
@@ -157,11 +162,12 @@ classes = (
     CHAT_COMPANION_OT_select_minimax,
     POPAGENT_OT_confirm_skill,
     POPAGENT_OT_ask_human,
-    POPAGENT_OT_ask_human_custom,
+    POPAGENT_OT_ask_human_pick,
     POPAGENT_OT_toggle_skill,
     POPAGENT_OT_clear_session_trust,
     POPAGENT_OT_set_skill_permission,
     POPAGENT_OT_reset_skill_permissions,
+    POPAGENT_OT_apply_quick_permission_preset,
     WM_MT_button_context,
     TEXT_PT_MT_chat_companion_custom_context,
 )

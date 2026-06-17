@@ -114,48 +114,6 @@ class CHAT_COMPANION_PT_prompt(POLYGONINGENIEUR_panel, Panel):
             depress=True if prefs.llm_organization == "minimax" else False,
         )
 
-        # ! openai
-        if prefs.llm_organization == "openai":
-            # choose between different models ("gpt-3.5-turbo", "gpt-4", ...)
-            gpt_model_container: UILayout = llm_selection.column(align=True)
-            model_selection = gpt_model_container.row(align=True)
-            model_selection.prop(prefs, "open_ai_model", text="")
-            # extra model links
-            model_info_link = model_selection.operator(
-                operator=CHAT_COMPANION_OT_website.bl_idname, text="", icon="QUESTION"
-            )
-            model_info_link.url = "https://platform.openai.com/docs/models"
-
-        # ! mimo
-        elif prefs.llm_organization == "mimo":
-            mimo_model_container: UILayout = llm_selection.column(align=True)
-            mimo_model_selection = mimo_model_container.row(align=True)
-            mimo_model_selection.prop(prefs, "mimo_model", text="")
-            model_info_link = mimo_model_selection.operator(
-                operator=CHAT_COMPANION_OT_website.bl_idname, text="", icon="QUESTION"
-            )
-            model_info_link.url = "https://platform.xiaomimimo.com/docs/en-US/api/chat/openai-api"
-
-        # ! deepseek
-        elif prefs.llm_organization == "deepseek":
-            deepseek_model_container: UILayout = llm_selection.column(align=True)
-            deepseek_model_selection = deepseek_model_container.row(align=True)
-            deepseek_model_selection.prop(prefs, "deepseek_model", text="")
-            model_info_link = deepseek_model_selection.operator(
-                operator=CHAT_COMPANION_OT_website.bl_idname, text="", icon="QUESTION"
-            )
-            model_info_link.url = "https://api-docs.deepseek.com/api/create-chat-completion"
-
-        # ! minimax (Anthropic-Messages-API compatible)
-        elif prefs.llm_organization == "minimax":
-            minimax_model_container: UILayout = llm_selection.column(align=True)
-            minimax_model_selection = minimax_model_container.row(align=True)
-            minimax_model_selection.prop(prefs, "minimax_model", text="")
-            model_info_link = minimax_model_selection.operator(
-                operator=CHAT_COMPANION_OT_website.bl_idname, text="", icon="QUESTION"
-            )
-            model_info_link.url = "https://platform.minimaxi.com/docs/llms.txt"
-
         # ! API key info
         api_key: str | None = None
         if prefs.llm_organization == "openai":
@@ -168,6 +126,68 @@ class CHAT_COMPANION_PT_prompt(POLYGONINGENIEUR_panel, Panel):
             api_key = prefs.minimax_api_key
 
         no_api_key = api_key is None or len(api_key) == 0 or api_key == ""
+
+        def draw_connection_test_button(row: UILayout):
+            if no_api_key:
+                return
+            test_button = row.row(align=True)
+            test_button.enabled = (
+                not props.waiting_for_answer
+                and not props.connection_test_running
+            )
+            test_button.operator(
+                operator="chat_companion.test_connection",
+                text="",
+                text_ctxt="*",
+                icon="LINKED",
+            )
+
+        # ! openai
+        if prefs.llm_organization == "openai":
+            # choose between different models ("gpt-3.5-turbo", "gpt-4", ...)
+            gpt_model_container: UILayout = llm_selection.column(align=True)
+            model_selection = gpt_model_container.row(align=True)
+            model_selection.prop(prefs, "open_ai_model", text="")
+            draw_connection_test_button(model_selection)
+            # extra model links
+            model_info_link = model_selection.operator(
+                operator=CHAT_COMPANION_OT_website.bl_idname, text="", icon="QUESTION"
+            )
+            model_info_link.url = "https://platform.openai.com/docs/models"
+
+        # ! mimo
+        elif prefs.llm_organization == "mimo":
+            mimo_model_container: UILayout = llm_selection.column(align=True)
+            mimo_model_selection = mimo_model_container.row(align=True)
+            mimo_model_selection.prop(prefs, "mimo_model", text="")
+            draw_connection_test_button(mimo_model_selection)
+            model_info_link = mimo_model_selection.operator(
+                operator=CHAT_COMPANION_OT_website.bl_idname, text="", icon="QUESTION"
+            )
+            model_info_link.url = "https://platform.xiaomimimo.com/docs/en-US/api/chat/openai-api"
+
+        # ! deepseek
+        elif prefs.llm_organization == "deepseek":
+            deepseek_model_container: UILayout = llm_selection.column(align=True)
+            deepseek_model_selection = deepseek_model_container.row(align=True)
+            deepseek_model_selection.prop(prefs, "deepseek_model", text="")
+            draw_connection_test_button(deepseek_model_selection)
+            model_info_link = deepseek_model_selection.operator(
+                operator=CHAT_COMPANION_OT_website.bl_idname, text="", icon="QUESTION"
+            )
+            model_info_link.url = "https://api-docs.deepseek.com/api/create-chat-completion"
+
+        # ! minimax (Anthropic-Messages-API compatible)
+        elif prefs.llm_organization == "minimax":
+            minimax_model_container: UILayout = llm_selection.column(align=True)
+            minimax_model_selection = minimax_model_container.row(align=True)
+            minimax_model_selection.prop(prefs, "minimax_model", text="")
+            draw_connection_test_button(minimax_model_selection)
+            model_info_link = minimax_model_selection.operator(
+                operator=CHAT_COMPANION_OT_website.bl_idname, text="", icon="QUESTION"
+            )
+            model_info_link.url = "https://platform.minimaxi.com/docs/llms.txt"
+
         if no_api_key:
             api_info_container = layout.column(align=True)
 
@@ -196,20 +216,6 @@ class CHAT_COMPANION_PT_prompt(POLYGONINGENIEUR_panel, Panel):
 
         # ! connectivity test
         if not no_api_key:
-            test_row: UILayout = layout.row(align=True)
-            test_row.enabled = (
-                not props.waiting_for_answer
-                and not props.connection_test_running
-            )
-            test_button_text = (
-                "Testing..." if props.connection_test_running else "Test Connection"
-            )
-            test_row.operator(
-                operator="chat_companion.test_connection",
-                text=test_button_text,
-                text_ctxt="*",
-                icon="LINKED",
-            )
             result = props.connection_test_result
             if result:
                 status_row: UILayout = layout.row(align=True)
@@ -258,6 +264,14 @@ class CHAT_COMPANION_PT_prompt(POLYGONINGENIEUR_panel, Panel):
             ask_operator.use_streaming = (
                 prefs.use_streaming and dependencies.dependencies_installed
             )
+
+        preset_row = layout.row(align=True)
+        preset_row.enabled = not props.waiting_for_answer
+        preset_row.operator(
+            operator="chat_companion.set_render_prep_prompt",
+            text="准备渲染",
+            icon="RENDER_STILL",
+        )
 
         if props.multimodal_enabled:
             self._draw_image_inputs(context, layout, props, prefs)

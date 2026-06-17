@@ -50,6 +50,23 @@ def test_cancel_operator_is_registered_and_visible_while_waiting():
     assert "props.waiting_for_answer" in prompt_text
 
 
+def test_connection_test_button_is_inline_with_model_help():
+    prompt_text = (ROOT / "panels" / "panel_prompt.py").read_text(encoding="utf-8")
+
+    assert "test_row: UILayout = layout.row(align=True)" not in prompt_text
+    assert 'text="Test Connection"' not in prompt_text
+    for model_prop in (
+        "open_ai_model",
+        "mimo_model",
+        "deepseek_model",
+        "minimax_model",
+    ):
+        model_section = prompt_text.split(
+            f'.prop(prefs, "{model_prop}", text="")', 1
+        )[1].split("model_info_link =", 1)[0]
+        assert "draw_connection_test_button(" in model_section
+
+
 def test_http_error_handler_uses_exception_response_not_unbound_local():
     text = (ROOT / "operators" / "operator_ask.py").read_text(encoding="utf-8")
     http_error_block = text.split("except httpx.HTTPError as e:", 1)[1].split(
@@ -65,6 +82,7 @@ def run():
     test_executor_validates_arguments_before_main_thread_dispatch()
     test_operator_ask_uses_retry_helper_for_provider_requests()
     test_cancel_operator_is_registered_and_visible_while_waiting()
+    test_connection_test_button_is_inline_with_model_help()
     test_http_error_handler_uses_exception_response_not_unbound_local()
     print("test_phase1_wiring OK")
     return True

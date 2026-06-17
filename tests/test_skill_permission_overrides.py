@@ -16,8 +16,9 @@ spec.loader.exec_module(skill_registry)
 
 
 class FakePrefs:
-    def __init__(self, raw: str):
+    def __init__(self, raw: str, quick_permission_preset: str = "DEFAULT"):
         self.skill_permission_overrides_json = raw
+        self.quick_permission_preset = quick_permission_preset
 
 
 def make_skill():
@@ -59,10 +60,31 @@ def test_permission_level_can_read_persistent_preferences_json():
     assert skill_registry.get_permission_level(skill, prefs=prefs) == "never"
 
 
+def test_auto_quick_permission_preset_allows_skill_without_confirmation():
+    skill_registry.clear_all()
+    skill = make_skill()
+    prefs = FakePrefs("{}", quick_permission_preset="AUTO")
+
+    assert skill_registry.get_permission_level(skill, prefs=prefs) == "never"
+
+
+def test_auto_quick_permission_preset_takes_priority_over_json():
+    skill_registry.clear_all()
+    skill = make_skill()
+    prefs = FakePrefs(
+        '{"test.owner::do_work": "always"}',
+        quick_permission_preset="AUTO",
+    )
+
+    assert skill_registry.get_permission_level(skill, prefs=prefs) == "never"
+
+
 def run():
     test_permission_level_uses_skill_metadata_by_default()
     test_permission_override_can_change_and_reset_to_preset()
     test_permission_level_can_read_persistent_preferences_json()
+    test_auto_quick_permission_preset_allows_skill_without_confirmation()
+    test_auto_quick_permission_preset_takes_priority_over_json()
     print("test_skill_permission_overrides OK")
     return True
 
