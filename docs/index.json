@@ -1,0 +1,32 @@
+{
+  "version": "v1",
+  "blocklist": [],
+  "data": [
+    {
+      "schema_version": "1.0.0",
+      "id": "pop_agent",
+      "name": "JhonYan",
+      "tagline": "Blender Agent powered by OpenAI and DeepSeek",
+      "version": "1.3.1",
+      "type": "add-on",
+      "maintainer": "POPTools",
+      "license": [
+        "SPDX:GPL-2.0-or-later"
+      ],
+      "blender_version_min": "5.1.0",
+      "blender_version_max": "5.1.999",
+      "website": "https://github.com/POPTools/POPAgent",
+      "permissions": {
+        "network": "Call LLM providers and Tavily web search on request"
+      },
+      "tags": [
+        "User Interface",
+        "Development",
+        "Text Editor"
+      ],
+      "archive_url": "./pop_agent-1.3.1.zip",
+      "archive_size": 322673,
+      "archive_hash": "sha256:d56eaee2e4349f91465f64c9e776a95a08439ccc067d897ea288e2d664b8045a"
+    }
+  ]
+}

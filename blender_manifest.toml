@@ -1,14 +1,14 @@
 schema_version = "1.0.0"
 
 id = "pop_agent"
-version = "1.3.0"
+version = "1.3.1"
 name = "JhonYan"
 tagline = "Blender Agent powered by OpenAI and DeepSeek"
 maintainer = "POPTools"
 type = "add-on"
 
 # link to documentation, support, source files, etc
-website = ""
+website = "https://github.com/POPTools/POPAgent"
 
 # https://docs.blender.org/manual/en/dev/advanced/extensions/tags.html
 tags = ["User Interface", "Development", "Text Editor"]
@@ -27,6 +27,17 @@ license = ["SPDX:GPL-2.0-or-later"]
 # Options are: files, network, clipboard, camera, microphone
 #
 [permissions]
-network = "Call LLM providers and Tavily web search when requested by the user"
+network = "Call LLM providers and Tavily web search on request"
 # files = "Import/export FBX from/to disk"
 # clipboard = "Copy and paste bone transforms"
+
+[build]
+paths_exclude_pattern = [
+  "__pycache__/",
+  ".pytest_cache/",
+  ".git/",
+  "tests/",
+  "usage_logs/",
+  "*.pyc",
+  "*.zip",
+]

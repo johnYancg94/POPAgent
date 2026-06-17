@@ -72,6 +72,8 @@ def record_tool_call(
         "arguments_preview": preview_value(arguments),
         "result_preview": preview_result(result),
     }
+    if name.startswith("renderset.") and isinstance(result, dict):
+        item["result"] = _bounded_renderset_result(result)
     iteration.setdefault("tool_calls", []).append(item)
 
     summary = trace.setdefault("summary", {})
@@ -79,6 +81,35 @@ def record_tool_call(
     if not ok:
         summary["error_count"] = int(summary.get("error_count", 0)) + 1
     return item
+
+
+def _bounded_renderset_result(result: dict) -> dict:
+    keep = (
+        "status",
+        "blocking_ambiguities",
+        "warnings",
+        "duplicate_contexts",
+        "unmatched_contexts",
+        "created",
+        "updated",
+        "migrated",
+        "skipped",
+        "failed",
+        "validation_results",
+        "saved",
+        "render_started",
+        "rolled_back",
+    )
+    out = {}
+    for key in keep:
+        if key not in result:
+            continue
+        value = result[key]
+        if isinstance(value, list):
+            out[key] = value[:20]
+        else:
+            out[key] = value
+    return out
 
 
 def record_abort(trace: dict, reason: str) -> None:

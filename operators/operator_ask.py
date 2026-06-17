@@ -67,6 +67,7 @@ from ..agent_core.execution_trace import (
     record_iteration,
     record_tool_call,
 )
+from ..agent_core.fallback_answers import fallback_answer_for_trace
 from ..agent_core.resume_context import (
     build_resume_context,
     parse_resume_context,
@@ -120,6 +121,24 @@ def _skill_meta_lookup(name: str) -> dict | None:
         "undoable": bool(meta.get("undoable")),
         "launches_external_process": bool(meta.get("launches_external_process")),
     }
+
+
+def _agent_error_kind(exc: Exception) -> str:
+    if isinstance(exc, ModelServerTimeoutError):
+        return "model_final_timeout"
+    try:
+        import httpx
+
+        if isinstance(exc, httpx.TimeoutException):
+            return "model_final_timeout"
+        if isinstance(exc, httpx.HTTPStatusError):
+            status = getattr(getattr(exc, "response", None), "status_code", 0)
+            return f"model_http_{status}" if status else "model_http_error"
+        if isinstance(exc, httpx.RequestError):
+            return "model_request_error"
+    except Exception:
+        pass
+    return type(exc).__name__
 
 
 class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
@@ -972,36 +991,57 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
             started_at = time.perf_counter()
             status_code = 200
             progress.emit(AgentProgressEvent(kind="model_request_start"))
-            if use_stream:
-                llm_resp = await self._agent_stream_iter(
-                    context, client, provider, url, headers, body, prefs, props,
-                    progress,
-                )
-                if llm_resp is None:
-                    record_abort(trace, "stream_error")
-                    return
-            else:
-                response = await self._post_with_retries(
-                    context,
-                    client,
-                    url=url,
-                    headers=headers,
-                    body=body,
-                    timeout=prefs.timeout,
-                    progress=progress,
-                )
-                response.raise_for_status()
-                cc_globals.request_failed = False
-                status_code = response.status_code
+            try:
+                if use_stream:
+                    llm_resp = await self._agent_stream_iter(
+                        context, client, provider, url, headers, body, prefs, props,
+                        progress,
+                    )
+                    if llm_resp is None:
+                        if self._finish_agent_with_fallback(
+                            context, props, prefs, mb, trace,
+                            error_kind="stream_error",
+                            error_message="Streaming failed before the final answer.",
+                        ):
+                            return
+                        record_abort(trace, "stream_error")
+                        return
+                else:
+                    response = await self._post_with_retries(
+                        context,
+                        client,
+                        url=url,
+                        headers=headers,
+                        body=body,
+                        timeout=self._agent_model_timeout(prefs, trace),
+                        progress=progress,
+                    )
+                    response.raise_for_status()
+                    cc_globals.request_failed = False
+                    status_code = response.status_code
 
-                try:
-                    resp_json = response.json()
-                except json.JSONDecodeError:
-                    record_abort(trace, "invalid_json")
-                    self.show_general_error(context, solution="Could not parse LLM response as JSON.")
-                    return
+                    try:
+                        resp_json = response.json()
+                    except json.JSONDecodeError:
+                        if self._finish_agent_with_fallback(
+                            context, props, prefs, mb, trace,
+                            error_kind="invalid_json",
+                            error_message="Could not parse LLM response as JSON.",
+                        ):
+                            return
+                        record_abort(trace, "invalid_json")
+                        self.show_general_error(context, solution="Could not parse LLM response as JSON.")
+                        return
 
-                llm_resp = provider.parse_response(resp_json)
+                    llm_resp = provider.parse_response(resp_json)
+            except Exception as exc:
+                if self._finish_agent_with_fallback(
+                    context, props, prefs, mb, trace,
+                    error_kind=_agent_error_kind(exc),
+                    error_message=str(exc),
+                ):
+                    return
+                raise
 
             latency_ms = (time.perf_counter() - started_at) * 1000
             self._record_usage(
@@ -1200,6 +1240,51 @@ class CHAT_COMPANION_OT_ask(Operator, AsyncModalOperatorMixin):
             agent_status="INTERRUPTED",
             resume_context_json=json.dumps(checkpoint, ensure_ascii=False),
         )
+
+    def _agent_model_timeout(self, prefs, trace: dict) -> float:
+        timeout = float(getattr(prefs, "timeout", 300.0) or 300.0)
+        summary = trace.get("summary", {}) if isinstance(trace, dict) else {}
+        if int(summary.get("tool_count", 0) or 0) <= 0:
+            return timeout
+        return min(timeout, 90.0)
+
+    def _finish_agent_with_fallback(
+        self,
+        context,
+        props,
+        prefs,
+        mb,
+        trace: dict,
+        *,
+        error_kind: str,
+        error_message: str = "",
+    ) -> bool:
+        final_text = fallback_answer_for_trace(
+            trace,
+            error_kind=error_kind,
+            error_message=error_message,
+        )
+        if not final_text:
+            return False
+        record_abort(trace, error_kind)
+        checkpoint = build_resume_context(
+            original_prompt=self.user_prompt,
+            trace=trace,
+            error_kind=error_kind,
+            error_message=error_message or final_text,
+        )
+        mb.append_assistant(final_text)
+        self._finish_agent(
+            context,
+            props,
+            prefs,
+            mb,
+            final_text,
+            trace,
+            agent_status="INTERRUPTED",
+            resume_context_json=json.dumps(checkpoint, ensure_ascii=False),
+        )
+        return True
 
     async def _agent_stream_iter(self, context, client, provider, url, headers,
                                  body, prefs, props, progress: ProgressSink):

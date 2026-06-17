@@ -189,6 +189,19 @@ def _assert_preview_only_auxiliary_collections(scene):
 
 
 scene = _build_scene()
+if not hasattr(scene, "renderset_contexts") or not hasattr(scene, "renderset_context_index"):
+    print(
+        "POPAGENT_RENDERSET_INTEGRATION="
+        + json.dumps(
+            {
+                "status": "skipped",
+                "reason": "RenderSet Pro scene properties are unavailable",
+            },
+            ensure_ascii=False,
+        )
+    )
+    sys.exit(0)
+
 with bpy.context.temp_override(scene=scene, view_layer=scene.view_layers[0]):
     inferred_prefix, prefix_issues = renderset_tools._infer_prefix(
         scene,
