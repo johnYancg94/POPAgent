@@ -99,7 +99,7 @@ if cc_globals.cc_full:
 
 bl_info = {
     # ! variant name
-    "name": "POPAgent",
+    "name": "PoPAgent",
     "author": "JhonYan",
     "description": "A Blender Agent based on OpenAI and DeepSeek.",
     "blender": (5, 1, 0),
